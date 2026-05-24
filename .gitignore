@@ -1,0 +1,80 @@
+# Python bytecode + caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtualenvs
+venv/
+.venv/
+env/
+ENV/
+
+# Editable installs / build artifacts
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+MANIFEST
+pip-wheel-metadata/
+
+# Test + coverage caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.benchmarks/
+.tox/
+
+# Type checker / linter caches
+.mypy_cache/
+.ruff_cache/
+
+# IDE configs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local Claude Code / preview workspace state - per-dev, not shared
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ExtensionGuard runtime artefacts (NEVER commit these)
+# Quarantine cases contain real (malicious) extension samples + chain of
+# custody hashes; they belong on the analyst workstation, never in git.
+quarantine/*/
+!quarantine/.gitkeep
+
+# Remediation queue file - per-host operational state
+remediation_queue.jsonl
+
+# Generated SIGMA exports (regenerated from sigma_generator.py)
+sigma/*.yml
+
+# Local config copies (the template extguard.conf.json IS committed)
+extguard.conf.local.json
+*.local.json
+
+# Secrets - belt-and-braces; don't commit credential files
+service-account*.json
+*.pem
+*.key
+.env
+.env.*
+
+# Local TTP library content - it's pulled from a separate repo via the
+# webhook ingestor. The ttp_library/ directory committed here only contains
+# the bundled baseline samples (campaigns/, patterns/, mitre_reference.md).
+# Anything else under it came from the central feed and shouldn't pollute
+# the source repo.
+ttp_library/_synced/
+
+# Performance benchmark snapshots - per-machine, regenerated locally
+.benchmarks/

@@ -1,0 +1,73 @@
+{
+  "_comment": "ExtensionGuard alert dispatch configuration. Copy this file and fill in your credentials.",
+
+  "sentinel": {
+    "_comment": "Microsoft Sentinel - Log Analytics Workspace. Find these in Azure Portal > Log Analytics > Agents.",
+    "enabled": false,
+    "workspace_id": "YOUR-WORKSPACE-ID-HERE",
+    "shared_key":   "YOUR-BASE64-SHARED-KEY-HERE",
+    "log_type":     "ExtensionGuardAlert",
+    "timeout_sec":  10
+  },
+
+  "splunk": {
+    "_comment": "Splunk HTTP Event Collector. Enable HEC in Splunk Web > Settings > Data Inputs > HTTP Event Collector.",
+    "enabled":     false,
+    "hec_url":     "https://your-splunk-host:8088/services/collector/event",
+    "hec_token":   "YOUR-HEC-TOKEN-HERE",
+    "index":       "security",
+    "sourcetype":  "extguard:alert",
+    "ssl_verify":  true,
+    "timeout_sec": 10
+  },
+
+  "pagerduty": {
+    "_comment": "PagerDuty Events API v2. Create a service integration in PagerDuty > Services > Integrations > Events API v2.",
+    "enabled":          false,
+    "integration_key":  "YOUR-PD-INTEGRATION-KEY-HERE",
+    "min_severity":     "high",
+    "timeout_sec":      10
+  },
+
+  "slack": {
+    "_comment": "Slack Incoming Webhook. Create one at https://api.slack.com/apps > Incoming Webhooks.",
+    "enabled":       false,
+    "webhook_url":   "https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
+    "channel":       "#security-alerts",
+    "min_severity":  "medium",
+    "timeout_sec":   10
+  },
+
+  "workspace": {
+    "_comment": "Google Workspace / Chrome Browser Cloud Management integration. Required to push extension blocklists across a cloud-managed Chrome fleet. Install the optional dependency: pip install -e '.[workspace]'. See README 'Workspace setup' for the one-time service-account creation steps.",
+    "enabled": false,
+    "service_account_json": "/path/to/service-account.json",
+    "customer_id": "YOUR-WORKSPACE-CUSTOMER-ID",
+    "default_org_unit": "/"
+  },
+
+  "webhook": {
+    "_comment": "GitHub webhook ingestor for live TTP library updates. Set up a webhook in the GitHub TTP repo pointing at https://<your-dashboard>/webhook/github with content-type application/json and the shared secret below. Pushes to `branch` trigger an automatic sync into ttp_library/. The dashboard rejects requests without a valid X-Hub-Signature-256.",
+    "owner":  "YOUR-GH-OWNER",
+    "repo":   "YOUR-TTP-REPO",
+    "branch": "main",
+    "path":   "",
+    "secret": "YOUR-WEBHOOK-SECRET-HERE",
+    "delete_orphans": false
+  },
+
+  "virustotal": {
+    "_comment": "VirusTotal hash lookup for Stage 1d. Set api_key here OR set VT_API_KEY env var (preferred - keeps the key out of git). Free tier: 4 req/min, 500/day. Set VT_DISABLED=1 in env to globally disable VT lookups even if enabled here.",
+    "enabled": false,
+    "api_key": "YOUR-VT-API-KEY-HERE"
+  },
+
+  "dispatch": {
+    "_comment": "Global dispatch behaviour settings.",
+    "dedup_ttl_seconds":    300,
+    "escalation_threshold": 3,
+    "min_severity":         "low",
+    "also_dispatch_triage": true,
+    "triage_min_score":     45
+  }
+}

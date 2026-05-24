@@ -1,0 +1,195 @@
+# pyproject.toml - ExtensionGuard packaging + tool config
+#
+# Build with:
+#   pip install -e .                       # editable install for dev
+#   pip install -e ".[dev]"                # also installs pytest + ruff
+#   python -m build                        # build a wheel for distribution
+#
+# After install you get four console scripts:
+#   extguard          -> main.py            (pre-install scanner)
+#   extguard-monitor  -> behavioral_monitor.py (Stage 3 CDP monitor)
+#   extguard-dispatch -> alert_dispatcher.py   (Stage 4 alert pipeline)
+#   extguard-remediate -> remediation.py       (Stage 5 IR orchestrator)
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+[project]
+name            = "extensionguard"
+version         = "0.2.0"
+description     = "Defensive SOC tool for browser extension supply chain threat detection"
+readme          = "README.md"
+requires-python = ">=3.10"
+license         = {text = "MIT"}
+authors         = [{name = "ExtensionGuard contributors"}]
+keywords        = ["security", "chrome", "extension", "soc", "supply-chain", "mitre"]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+# Core runtime dependencies. Kept deliberately small.
+dependencies = [
+    "anthropic>=0.40.0",
+    "requests>=2.31.0",
+    "websockets>=12.0",
+    "flask>=3.0",            # Analyst dashboard - extguard-dashboard CLI
+]
+
+
+[project.optional-dependencies]
+# Install with: pip install -e ".[dev]"
+dev = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "pytest-asyncio>=0.23",   # For testing behavioral_monitor's async CDP handlers
+    "pytest-benchmark>=4.0",  # For tests/benchmarks/ throughput measurements
+    "ruff>=0.5",
+    "build>=1.0",
+]
+
+# Google Workspace / Chrome Browser Cloud Management integration. Optional
+# because most users only need the local registry/policy-file kill. Install
+# with: pip install -e ".[workspace]"
+workspace = [
+    "google-api-python-client>=2.100",
+    "google-auth>=2.30",
+]
+
+
+[project.urls]
+# Update these once the repo is published
+Homepage = "https://github.com/example/extensionguard"
+Issues   = "https://github.com/example/extensionguard/issues"
+
+
+# Console scripts - what `pip install` adds to the user's PATH.
+# Each entry: command_name = "module_path:function_name"
+[project.scripts]
+extguard           = "main:main"
+extguard-monitor   = "behavioral_monitor:main"
+extguard-dispatch  = "alert_dispatcher:main"
+extguard-remediate = "remediation:main"
+extguard-dashboard = "dashboard:main"
+extguard-ttp-sync  = "ttp_ingestor:main"
+extguard-sigma     = "sigma_generator:main"
+
+
+# ---------------------------------------------------------------------------
+# Setuptools configuration - tells the packager what to include
+# ---------------------------------------------------------------------------
+
+[tool.setuptools]
+# Top-level Python modules to ship (one entry per .py file in the project root)
+py-modules = [
+    "main",
+    "models",
+    "crx_parser",
+    "permission_scorer",
+    "publisher_checker",
+    "osv_lookup",
+    "virustotal_lookup",
+    "update_velocity",
+    "claude_triage",
+    "behavioral_monitor",
+    "alert_dispatcher",
+    "remediation",
+    "config_schema",
+    "logging_setup",
+    "dashboard",
+    "ttp_loader",
+    "ttp_ingestor",
+    "sigma_generator",
+]
+
+# Sub-packages (directories with __init__.py)
+packages = ["adapters", "remediators"]
+
+
+# Include the default config template + threat-intelligence fixtures +
+# dashboard templates/static files in the wheel.
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.md", "dashboard_templates/*.html", "dashboard_static/*.css"]
+
+
+# ---------------------------------------------------------------------------
+# ruff - linter + formatter (replaces flake8, black, isort, pyupgrade)
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length    = 100
+target-version = "py310"
+extend-exclude = ["quarantine", "__pycache__", ".pytest_cache"]
+
+
+[tool.ruff.lint]
+# A sensible default rule set. Add/remove rules over time as the team agrees.
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused imports, undefined names)
+    "I",    # isort (import ordering)
+    "B",    # flake8-bugbear (likely bugs)
+    "UP",   # pyupgrade (modern Python syntax)
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+]
+
+# Rules we explicitly DON'T want, with reasons:
+ignore = [
+    "E501",   # Line too long - we set line-length above, but want to allow
+              # over-long lines for readable URLs and comments
+    "B008",   # Function calls in defaults - we use them intentionally for
+              # config patterns like base_delay=DEFAULT_BASE_DELAY
+    "UP015",  # `open(p, "r")` - keep explicit mode for readability
+    # --- SIM-rule opt-outs ---
+    # SIM rules are stylistic suggestions, not bug catches. We disable the
+    # ones that conflict with readability or our intentional patterns:
+    "SIM102", # Collapsible if - nested ifs read clearer in detection chains
+    "SIM103", # Needless bool - explicit return True/False makes intent obvious
+    "SIM105", # contextlib.suppress vs try/except/pass - explicit try is fine
+              #   and matches the CS50P-level patterns the rest of the code uses
+    "SIM108", # Use ternary - sometimes if/else is more readable
+    "SIM117", # Multiple `with` statements - nested `with` is more debuggable
+              #   when one context manager raises, especially in test mocks
+]
+
+
+[tool.ruff.lint.per-file-ignores]
+# Test files can have longer functions and unused imports for fixtures
+"tests/*.py" = ["E501", "F401", "F811"]
+# __init__.py files can be empty
+"**/__init__.py" = ["F401"]
+
+
+[tool.ruff.format]
+# Use the default Black-compatible formatter settings
+quote-style    = "double"
+indent-style   = "space"
+
+
+# ---------------------------------------------------------------------------
+# pytest - test runner config (mirrored from pytest.ini for completeness)
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths       = ["tests"]
+python_files    = ["test_*.py"]
+python_classes  = ["Test*"]
+python_functions = ["test_*"]
+addopts         = "--tb=short -v"
+filterwarnings  = [
+    "error",
+    "ignore::DeprecationWarning:websockets.*",
+]

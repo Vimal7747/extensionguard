@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} {{ message }} | ExtensionGuard{% endblock %}
+
+{% block content %}
+<section class="panel fail">
+  <h2>{{ code }} {{ message }}</h2>
+  <p><a href="{{ url_for('index') }}">Return to the dashboard</a></p>
+</section>
+{% endblock %}

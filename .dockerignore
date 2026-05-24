@@ -1,0 +1,42 @@
+# Files NOT copied into the build context.
+# Mirror .gitignore for the most part - the build only needs the source.
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.benchmarks/
+
+# Virtualenvs
+venv/
+.venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Tests + tooling - not needed inside the runtime image
+tests/
+.github/
+
+# IDE / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Runtime state - never bake into the image
+quarantine/*/
+remediation_queue.jsonl
+sigma/
+*.local.json
+service-account*.json
+.env*

@@ -1,0 +1,146 @@
+/* ExtensionGuard dashboard — minimal, functional, no framework */
+
+:root {
+  --bg:        #0f1419;
+  --panel:    #1a1f26;
+  --text:     #e4e8ed;
+  --muted:    #8a9099;
+  --accent:   #4ec9b0;
+  --critical: #f48771;
+  --high:     #ff9c4a;
+  --medium:   #e6d273;
+  --low:      #6abf69;
+  --border:   #2d333b;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+}
+
+header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+header h1 { margin: 0; font-size: 18px; }
+header h1 a { color: var(--accent); text-decoration: none; }
+header nav a {
+  color: var(--text);
+  margin-left: 16px;
+  text-decoration: none;
+}
+header nav a:hover { color: var(--accent); }
+
+main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+footer { padding: 16px 24px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 48px; }
+
+.muted { color: var(--muted); }
+.grid { display: grid; grid-template-columns: 2fr 1fr; gap: 24px; }
+@media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+.panel h2, .panel h3 { margin-top: 0; }
+.panel.ok   { border-left: 4px solid var(--low); }
+.panel.fail { border-left: 4px solid var(--critical); }
+
+table { width: 100%; border-collapse: collapse; }
+th, td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th { background: rgba(255,255,255,0.03); font-weight: 600; }
+code {
+  background: rgba(255,255,255,0.06);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 12px;
+}
+.hash { font-family: "JetBrains Mono", Consolas, monospace; font-size: 11px; word-break: break-all; }
+
+dl { display: grid; grid-template-columns: 200px 1fr; gap: 6px 16px; margin: 0; }
+dt { color: var(--muted); }
+
+.alerts { list-style: none; padding: 0; margin: 0; }
+.alert {
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.02);
+}
+.alert-head { display: flex; gap: 12px; align-items: center; font-size: 12px; }
+.alert .rule { font-weight: 600; }
+.alert .severity { font-size: 11px; font-weight: 700; }
+.alert .url { font-size: 11px; word-break: break-all; }
+
+.severity-critical { color: var(--critical); border-left-color: var(--critical); }
+.severity-high     { color: var(--high);     border-left-color: var(--high); }
+.severity-medium   { color: var(--medium);   border-left-color: var(--medium); }
+.severity-low      { color: var(--low);      border-left-color: var(--low); }
+.severity-unknown  { color: var(--muted);    border-left-color: var(--muted); }
+
+.btn {
+  background: var(--accent);
+  color: var(--bg);
+  border: 0;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.btn:hover { opacity: 0.9; }
+.btn-secondary { background: var(--border); color: var(--text); }
+.btn-danger    { background: var(--critical); color: var(--bg); }
+
+form { display: inline-block; margin: 8px 12px 8px 0; }
+form label { display: block; margin-bottom: 4px; }
+form input[type="text"] {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 3px;
+  width: 260px;
+  font: inherit;
+}
+
+.breadcrumb { margin-bottom: 16px; }
+.breadcrumb a { color: var(--accent); text-decoration: none; }
+
+.narrative {
+  background: var(--bg);
+  padding: 12px;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  font-size: 13px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+ol.custody { padding-left: 20px; }
+ol.custody li { margin-bottom: 8px; }

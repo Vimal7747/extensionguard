@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Cases &amp; alerts | ExtensionGuard{% endblock %}
+
+{% block content %}
+<section class="grid">
+  <div class="panel">
+    <h2>Quarantine cases ({{ cases|length }})</h2>
+    {% if cases %}
+      <table class="cases">
+        <thead>
+          <tr>
+            <th>Case ID</th>
+            <th>Extension</th>
+            <th>Preserved</th>
+            <th>Operator</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in cases %}
+          <tr>
+            <td><a href="{{ url_for('case_detail', case_id=c.case_id) }}">{{ c.case_id }}</a></td>
+            <td>
+              <strong>{{ c.extension_name or 'Unknown' }}</strong>
+              {% if c.extension_id %}<br><code class="muted">{{ c.extension_id }}</code>{% endif %}
+            </td>
+            <td><time>{{ c.preserved_at or '—' }}</time></td>
+            <td>{{ c.operator or '—' }}</td>
+            <td>
+              {{ c.n_actions }}
+              {% if c.last_action %}<br><span class="muted">last: {{ c.last_action }}</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No quarantine cases yet. Cases appear here after <code>extguard-remediate</code> runs.</p>
+    {% endif %}
+  </div>
+
+  <div class="panel">
+    <h2>Recent alerts (<span id="alert-count">{{ alerts|length }}</span>)</h2>
+    {% if alerts %}
+      <ul class="alerts" id="alert-list">
+        {% for a in alerts %}
+        <li class="alert severity-{{ a.severity or 'unknown' }}">
+          <div class="alert-head">
+            <span class="rule">{{ a.rule or 'UNKNOWN' }}</span>
+            <span class="severity">{{ (a.severity or 'unknown')|upper }}</span>
+            <time>{{ a.alert_time or '' }}</time>
+          </div>
+          <div class="alert-body">
+            <strong>{{ a.extension.title if a.extension else 'unknown' }}</strong>
+            <p>{{ a.detail.description if a.detail else '' }}</p>
+            {% if a.detail and a.detail.url %}
+              <code class="url">{{ a.detail.url }}</code>
+            {% endif %}
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="muted">No recent alerts. Pass <code>--alerts-log &lt;path&gt;</code> when starting the dashboard to tail a JSONL alert stream.</p>
+    {% endif %}
+  </div>
+</section>
+
+<script>
+  // Light polling - refresh the alert list every 10s if the log is configured
+  (function() {
+    var list = document.getElementById("alert-list");
+    if (!list) return;
+    setInterval(function() {
+      fetch("/api/alerts?limit=20")
+        .then(function(r) { return r.json(); })
+        .then(function(alerts) {
+          document.getElementById("alert-count").textContent = alerts.length;
+          // Light refresh: just update the count. Full re-render would
+          // require client-side templating; defer to next iteration.
+        })
+        .catch(function() { /* ignore - server may be down */ });
+    }, 10000);
+  })();
+</script>
+{% endblock %}

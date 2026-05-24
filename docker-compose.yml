@@ -1,0 +1,103 @@
+# docker-compose.yml - ExtensionGuard SOC deployment
+#
+# Three services:
+#   - dashboard:  Flask analyst console at http://localhost:5000
+#   - dispatcher: long-running Stage 4 dispatcher (reads alerts.jsonl, dispatches)
+#   - ttp-sync:   nightly cron-style pull from the configured GitHub TTP repo
+#
+# Run with:
+#   docker compose up -d
+#
+# The monitor (Stage 3) is NOT in here because it has to connect to a real
+# Chrome instance via CDP - that's host-bound and best run outside Docker
+# on the SOC analyst's actual workstation.
+
+services:
+  # ----------------------------------------------------------------------
+  # Analyst dashboard - the primary web UI for browsing cases and approving
+  # remediations. Bound to 127.0.0.1 by default so the published port is only
+  # reachable from the host; put it behind a reverse proxy if exposing wider.
+  # ----------------------------------------------------------------------
+  dashboard:
+    build: .
+    image: extensionguard:0.2.0
+    container_name: extguard-dashboard
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - quarantine:/var/lib/extguard/quarantine
+      - ttp_library:/var/lib/extguard/ttp_library
+      - ./extguard.conf.json:/var/lib/extguard/extguard.conf.json:ro
+      - ./alerts.jsonl:/var/lib/extguard/alerts.jsonl:ro
+    environment:
+      - EXTGUARD_LOG_JSON=1
+      - EXTGUARD_LOG_LEVEL=INFO
+    command:
+      - "extguard-dashboard"
+      - "--host=0.0.0.0"
+      - "--port=5000"
+      - "--quarantine=/var/lib/extguard/quarantine"
+      - "--alerts-log=/var/lib/extguard/alerts.jsonl"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/api/health', timeout=2).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ----------------------------------------------------------------------
+  # Alert dispatcher - reads alerts.jsonl (typically piped from
+  # behavioral_monitor on the host) and fans out to configured SIEM /
+  # paging destinations.
+  # ----------------------------------------------------------------------
+  dispatcher:
+    image: extensionguard:0.2.0
+    container_name: extguard-dispatcher
+    restart: unless-stopped
+    depends_on:
+      - dashboard
+    volumes:
+      - ./extguard.conf.json:/var/lib/extguard/extguard.conf.json:ro
+      - ./alerts.jsonl:/var/lib/extguard/alerts.jsonl:ro
+    environment:
+      - EXTGUARD_LOG_JSON=1
+      - EXTGUARD_LOG_LEVEL=INFO
+      # Adapter credentials - source from .env file or your secrets manager
+      - VT_API_KEY=${VT_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    # `tail -f` keeps the file open and streams new lines to the dispatcher.
+    # Using shell so we can pipe across the container's process boundary.
+    entrypoint: ["sh", "-c"]
+    command:
+      - "tail -F /var/lib/extguard/alerts.jsonl | extguard-dispatch"
+
+  # ----------------------------------------------------------------------
+  # Nightly TTP library sync. Re-runs extguard-ttp-sync once every 24 hours
+  # to pull the latest threat intel from the configured GitHub repo. The
+  # ttp_library volume is shared with the dashboard so updates are visible
+  # immediately via Claude's next triage call.
+  # ----------------------------------------------------------------------
+  ttp-sync:
+    image: extensionguard:0.2.0
+    container_name: extguard-ttp-sync
+    restart: unless-stopped
+    volumes:
+      - ttp_library:/var/lib/extguard/ttp_library
+      - ./extguard.conf.json:/var/lib/extguard/extguard.conf.json:ro
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+    entrypoint: ["sh", "-c"]
+    # Simple loop instead of cron - keeps the container minimal. Sleep 24h
+    # then re-run the sync. First sync runs immediately on container start.
+    command:
+      - |
+        while true; do
+          extguard-ttp-sync --target=/var/lib/extguard/ttp_library || true
+          sleep 86400
+        done
+
+# Named volumes so the quarantine + TTP library survive container restarts.
+volumes:
+  quarantine:
+  ttp_library:

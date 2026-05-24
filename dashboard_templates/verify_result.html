@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Verify {{ case_id }} | ExtensionGuard{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="{{ url_for('case_detail', case_id=case_id) }}">&laquo; Back to case {{ case_id }}</a>
+</nav>
+
+<h2>Integrity verification</h2>
+
+{% if result.ok %}
+  <div class="panel ok">
+    <h3>OK</h3>
+    <p>All <strong>{{ result.verified }}/{{ result.total }}</strong> artifacts match the recorded SHA-256 hashes.</p>
+    <p class="muted">The case folder has not been tampered with since preservation.</p>
+  </div>
+{% else %}
+  <div class="panel fail">
+    <h3>FAIL</h3>
+    {% if result.error %}
+      <p>{{ result.error }}</p>
+    {% else %}
+      <p>
+        <strong>{{ result.mismatches|length }} of {{ result.total }} artifacts FAILED verification.</strong>
+        Evidence has been modified since preservation - investigate before relying on it.
+      </p>
+      <table class="mismatches">
+        <thead><tr><th>File</th><th>Issue</th><th>Expected</th><th>Actual</th></tr></thead>
+        <tbody>
+          {% for m in result.mismatches %}
+          <tr>
+            <td><code>{{ m.file }}</code></td>
+            <td>{{ m.issue }}</td>
+            <td class="hash">{{ m.expected or '—' }}</td>
+            <td class="hash">{{ m.actual or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+{% endif %}
+{% endblock %}

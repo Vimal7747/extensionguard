@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}ExtensionGuard{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <h1><a href="{{ url_for('index') }}">ExtensionGuard</a></h1>
+    <nav>
+      <a href="{{ url_for('index') }}">Cases &amp; alerts</a>
+      <a href="/api/health" class="muted">Health</a>
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <small>
+      Local analyst tool &middot; read-only by default &middot;
+      <span class="muted">remediation actions are queued, not executed directly</span>
+    </small>
+  </footer>
+</body>
+</html>

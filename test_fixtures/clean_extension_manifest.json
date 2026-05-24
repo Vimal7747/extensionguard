@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Dark Mode for Docs (SIMULATED BENIGN)",
+  "version": "2.1.0",
+  "description": "Applies dark mode to Google Docs",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "*://docs.google.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://docs.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "update_url": "https://clients2.google.com/service/update2/crx"
+}

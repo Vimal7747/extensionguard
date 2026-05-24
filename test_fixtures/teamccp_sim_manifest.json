@@ -1,0 +1,28 @@
+{
+  "manifest_version": 2,
+  "name": "Nx Console (SIMULATED MALICIOUS)",
+  "version": "17.3.1",
+  "description": "Integrated experience for Nx monorepos",
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "permissions": [
+    "cookies",
+    "tabs",
+    "storage",
+    "webRequest",
+    "webRequestBlocking",
+    "history",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": ["inject.js"],
+  "update_url": "https://clients2.google.com/service/update2/crx"
+}

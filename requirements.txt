@@ -1,0 +1,11 @@
+# ExtensionGuard dependencies
+# Install with:  pip install -r requirements.txt
+
+# Anthropic Claude API — Stage 2 AI triage engine
+anthropic>=0.40.0
+
+# HTTP client — CWS publisher queries, OSV API lookups
+requests>=2.31.0
+
+# WebSocket client — Stage 3 Chrome DevTools Protocol connection
+websockets>=12.0
