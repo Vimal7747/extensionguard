@@ -51,46 +51,31 @@ import sys
 SECRET_PATTERNS = [
     # Slack webhook URLs: https://hooks.slack.com/services/T.../B.../<token>
     # The whole token segment is sensitive, not just one field.
-    (re.compile(r"(https://hooks\.slack\.com/services/)[A-Za-z0-9/_-]+"),
-     r"\1[REDACTED]"),
-
+    (re.compile(r"(https://hooks\.slack\.com/services/)[A-Za-z0-9/_-]+"), r"\1[REDACTED]"),
     # Anthropic API keys: sk-ant-api03-... and sk-ant-...
-    (re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"),
-     "sk-ant-[REDACTED]"),
-
+    (re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}"), "sk-ant-[REDACTED]"),
     # Generic Bearer tokens in Authorization headers
-    (re.compile(r"(Authorization\s*[:=]\s*['\"]?Bearer\s+)[A-Za-z0-9._-]+",
-                re.IGNORECASE),
-     r"\1[REDACTED]"),
-
+    (
+        re.compile(r"(Authorization\s*[:=]\s*['\"]?Bearer\s+)[A-Za-z0-9._-]+", re.IGNORECASE),
+        r"\1[REDACTED]",
+    ),
     # Splunk HEC tokens: GUID-shaped, often in Authorization: Splunk <token>
-    (re.compile(r"(Authorization\s*[:=]\s*['\"]?Splunk\s+)[A-Za-z0-9-]+",
-                re.IGNORECASE),
-     r"\1[REDACTED]"),
-
+    (
+        re.compile(r"(Authorization\s*[:=]\s*['\"]?Splunk\s+)[A-Za-z0-9-]+", re.IGNORECASE),
+        r"\1[REDACTED]",
+    ),
     # PagerDuty integration keys: 32-char alphanumeric, often labelled
-    (re.compile(r"(integration_key['\"]?\s*[:=]\s*['\"]?)[A-Za-z0-9]{20,}"),
-     r"\1[REDACTED]"),
-
+    (re.compile(r"(integration_key['\"]?\s*[:=]\s*['\"]?)[A-Za-z0-9]{20,}"), r"\1[REDACTED]"),
     # Sentinel shared key: base64-shaped, often labelled
-    (re.compile(r"(shared_key['\"]?\s*[:=]\s*['\"]?)[A-Za-z0-9+/]{20,}={0,2}"),
-     r"\1[REDACTED]"),
-
+    (re.compile(r"(shared_key['\"]?\s*[:=]\s*['\"]?)[A-Za-z0-9+/]{20,}={0,2}"), r"\1[REDACTED]"),
     # AWS access key IDs: AKIA / ASIA prefix + 16 alphanumeric chars
-    (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b"),
-     r"\1[REDACTED]"),
-
+    (re.compile(r"\b(AKIA|ASIA)[A-Z0-9]{16}\b"), r"\1[REDACTED]"),
     # GitHub PATs: classic (ghp_..., gho_..., ghu_..., ghs_..., ghr_...)
-    (re.compile(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"),
-     r"\1_[REDACTED]"),
-
+    (re.compile(r"\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"), r"\1_[REDACTED]"),
     # GitHub fine-grained PATs: github_pat_...
-    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"),
-     "github_pat_[REDACTED]"),
-
+    (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}"), "github_pat_[REDACTED]"),
     # npm tokens: npm_... prefix
-    (re.compile(r"\bnpm_[A-Za-z0-9]{20,}"),
-     "npm_[REDACTED]"),
+    (re.compile(r"\bnpm_[A-Za-z0-9]{20,}"), "npm_[REDACTED]"),
 ]
 
 
@@ -111,6 +96,7 @@ def redact(text: str) -> str:
 # ---------------------------------------------------------------------------
 # SecretRedactionFilter - applied to every log handler
 # ---------------------------------------------------------------------------
+
 
 class SecretRedactionFilter(logging.Filter):
     """
@@ -134,26 +120,26 @@ class SecretRedactionFilter(logging.Filter):
                 record.args = {k: redact(str(v)) for k, v in record.args.items()}
             elif isinstance(record.args, tuple):
                 record.args = tuple(
-                    redact(str(a)) if isinstance(a, str) else a
-                    for a in record.args
+                    redact(str(a)) if isinstance(a, str) else a for a in record.args
                 )
 
-        return True   # Don't drop the record - just modify it
+        return True  # Don't drop the record - just modify it
 
 
 # ---------------------------------------------------------------------------
 # Optional JSON formatter (for SOC log shipping)
 # ---------------------------------------------------------------------------
 
+
 class JsonFormatter(logging.Formatter):
     """One JSON object per line - what Splunk / ELK / Loki expect."""
 
     def format(self, record: logging.LogRecord) -> str:
         obj = {
-            "ts":     self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
-            "level":  record.levelname,
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
             "logger": record.name,
-            "msg":    record.getMessage(),
+            "msg": record.getMessage(),
         }
         if record.exc_info:
             obj["exc"] = self.formatException(record.exc_info)
@@ -185,7 +171,7 @@ def get_logger(name: str) -> logging.Logger:
 def _configure_root():
     """Set up the root logger once, applying env-var overrides."""
     level_name = os.environ.get("EXTGUARD_LOG_LEVEL", "INFO").upper()
-    level      = getattr(logging, level_name, logging.INFO)
+    level = getattr(logging, level_name, logging.INFO)
 
     root = logging.getLogger()
     root.setLevel(level)
@@ -200,10 +186,12 @@ def _configure_root():
     if os.environ.get("EXTGUARD_LOG_JSON") == "1":
         stderr_handler.setFormatter(JsonFormatter())
     else:
-        stderr_handler.setFormatter(logging.Formatter(
-            fmt="%(asctime)s %(levelname)-7s %(name)-20s %(message)s",
-            datefmt="%Y-%m-%d %H:%M:%S",
-        ))
+        stderr_handler.setFormatter(
+            logging.Formatter(
+                fmt="%(asctime)s %(levelname)-7s %(name)-20s %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
 
     # The redaction filter goes on the HANDLER, not the logger, so every
     # message routed through this handler is scrubbed regardless of which
@@ -217,11 +205,13 @@ def _configure_root():
         # Rotating file handler so logs don't grow unbounded.
         # Keeps 5 backups of 10 MB each.
         file_handler = logging.handlers.RotatingFileHandler(
-            filename=log_file, maxBytes=10 * 1024 * 1024, backupCount=5,
+            filename=log_file,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
             encoding="utf-8",
         )
         file_handler.setLevel(level)
-        file_handler.setFormatter(JsonFormatter())   # Always JSON to file
+        file_handler.setFormatter(JsonFormatter())  # Always JSON to file
         file_handler.addFilter(SecretRedactionFilter())
         root.addHandler(file_handler)
 

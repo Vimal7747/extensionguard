@@ -23,6 +23,7 @@ from alert_dispatcher import (
 # Fingerprinting - the deduplication key
 # ---------------------------------------------------------------------------
 
+
 class TestFingerprint:
     def test_uses_rule_and_extension_id(self, sample_alert):
         fp = _fingerprint(sample_alert)
@@ -52,6 +53,7 @@ class TestFingerprint:
 # Severity comparison
 # ---------------------------------------------------------------------------
 
+
 class TestSeverityMeetsMinimum:
     def test_critical_meets_all_floors(self):
         for floor in ("low", "medium", "high", "critical"):
@@ -71,6 +73,7 @@ class TestSeverityMeetsMinimum:
 # ---------------------------------------------------------------------------
 # Dedup + escalation state machine
 # ---------------------------------------------------------------------------
+
 
 class TestAlertState:
     def test_first_alert_is_sent(self, sample_alert):
@@ -122,22 +125,23 @@ class TestAlertState:
 # Alert normalisation (monitor vs triage source)
 # ---------------------------------------------------------------------------
 
+
 class TestNormalisation:
     def test_monitor_alert_passthrough(self, sample_alert):
         result = normalise_alert(sample_alert, "monitor")
         assert result == sample_alert
 
     def test_monitor_alert_without_rule_dropped(self):
-        bad = {"severity": "high"}   # missing rule
+        bad = {"severity": "high"}  # missing rule
         assert normalise_alert(bad, "monitor") is None
 
     def test_triage_low_risk_dropped(self):
         """We don't page on LOW-risk pre-install scans."""
         low_triage = {
-            "extension_name":  "Benign",
+            "extension_name": "Benign",
             "composite_score": 5,
-            "risk_level":      "low",
-            "ai_triage":       None,
+            "risk_level": "low",
+            "ai_triage": None,
         }
         assert normalise_alert(low_triage, "triage") is None
 
@@ -155,11 +159,12 @@ class TestNormalisation:
 # Enrichment
 # ---------------------------------------------------------------------------
 
+
 class TestEnrich:
     def test_adds_sensor_host(self, sample_alert):
         enriched = enrich(sample_alert, escalated=False)
         assert "sensor_host" in enriched
-        assert enriched["sensor_host"]   # not empty
+        assert enriched["sensor_host"]  # not empty
 
     def test_escalation_promotes_severity(self, sample_alert):
         sample_alert["severity"] = "high"
@@ -175,7 +180,7 @@ class TestEnrich:
 
     def test_adds_recommendation(self, sample_alert):
         enriched = enrich(sample_alert, escalated=False)
-        assert "BLOCK IMMEDIATELY" in enriched["recommendation"]   # critical -> block
+        assert "BLOCK IMMEDIATELY" in enriched["recommendation"]  # critical -> block
 
     def test_does_not_mutate_input(self, sample_alert):
         """Enrichment must work on a copy - original alert untouched."""
@@ -187,6 +192,7 @@ class TestEnrich:
 # ---------------------------------------------------------------------------
 # Config loading
 # ---------------------------------------------------------------------------
+
 
 class TestStdinAutoDetect:
     """The triage stdin reader must handle both line-mode and document-mode."""
@@ -213,8 +219,7 @@ class TestStdinAutoDetect:
         from alert_dispatcher import _read_triage_stdin
 
         lines = (
-            '{"rule": "RULE-01", "severity": "high"}\n'
-            '{"rule": "RULE-02", "severity": "medium"}\n'
+            '{"rule": "RULE-01", "severity": "high"}\n{"rule": "RULE-02", "severity": "medium"}\n'
         )
         monkeypatch.setattr("sys.stdin", io.StringIO(lines))
 
@@ -227,6 +232,7 @@ class TestStdinAutoDetect:
         import io
 
         from alert_dispatcher import _read_triage_stdin
+
         monkeypatch.setattr("sys.stdin", io.StringIO(""))
         assert list(_read_triage_stdin(verbose=False)) == []
 
@@ -237,7 +243,7 @@ class TestConfigLoading:
         raw = {
             "sentinel": {
                 "_comment": "this is documentation",
-                "enabled":  True,
+                "enabled": True,
                 "workspace_id": "abc",
             },
         }

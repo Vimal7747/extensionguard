@@ -19,6 +19,7 @@ from remediators.cred_rotation import (
 # Host-permission -> store mapping
 # ---------------------------------------------------------------------------
 
+
 class TestStoreDetection:
     def test_all_urls_matches_all_stores(self):
         """<all_urls> should map to every credential store as worst-case."""
@@ -57,7 +58,7 @@ class TestStoreDetection:
         )
         # github is critical, slack is high - github should come first
         github_idx = result.index("github") if "github" in result else 99
-        slack_idx  = result.index("slack")  if "slack"  in result else 99
+        slack_idx = result.index("slack") if "slack" in result else 99
         assert github_idx < slack_idx
 
 
@@ -90,7 +91,7 @@ class TestPatternMatches:
     def test_subdomain_match_still_works_after_fix(self):
         """api.github.com IS a real GitHub subdomain - should still match."""
         assert _pattern_matches("*.github.com", "https://api.github.com/*")
-        assert _pattern_matches("github.com",   "https://api.github.com/*")
+        assert _pattern_matches("github.com", "https://api.github.com/*")
 
     def test_exact_host_match_after_fix(self):
         """https://github.com/* matches the github.com pattern exactly."""
@@ -128,6 +129,7 @@ class TestMaxSeverity:
 # Playbook generation
 # ---------------------------------------------------------------------------
 
+
 class TestGeneratePlaybook:
     def test_no_applicable_stores_returns_empty_playbook(self):
         result = generate_playbook(
@@ -145,7 +147,7 @@ class TestGeneratePlaybook:
             iocs=["Permission combo matches TeamPCP"],
             extension_name="Nx Console",
         )
-        assert len(result["applicable"]) == 6   # All tracked stores
+        assert len(result["applicable"]) == 6  # All tracked stores
         assert result["severity"] == "critical"
         assert result["total_steps"] > 10
         assert result["total_time_min"] > 60
@@ -195,6 +197,7 @@ class TestGeneratePlaybook:
 # Save playbook
 # ---------------------------------------------------------------------------
 
+
 class TestSavePlaybook:
     def test_writes_markdown_and_json(self, tmp_path):
         playbook = generate_playbook(
@@ -228,6 +231,7 @@ class TestSavePlaybook:
 # Static playbook content sanity
 # ---------------------------------------------------------------------------
 
+
 class TestPlaybookContent:
     """Catches accidental regressions where a playbook entry loses a field."""
 
@@ -235,19 +239,19 @@ class TestPlaybookContent:
     def test_every_store_has_required_fields(self, store_key):
         """Every store entry must have host_patterns, severity, time_estimate_min, steps."""
         store = CREDENTIAL_PLAYBOOKS[store_key]
-        assert "host_patterns"     in store
-        assert "severity"          in store
+        assert "host_patterns" in store
+        assert "severity" in store
         assert "time_estimate_min" in store
-        assert "steps"             in store
+        assert "steps" in store
         assert store["severity"] in ("critical", "high", "medium", "low")
 
     @pytest.mark.parametrize("store_key", list(CREDENTIAL_PLAYBOOKS.keys()))
     def test_every_step_has_required_fields(self, store_key):
         for step in CREDENTIAL_PLAYBOOKS[store_key]["steps"]:
-            assert "step"   in step
-            assert "title"  in step
-            assert "why"    in step
-            assert "how"    in step
+            assert "step" in step
+            assert "title" in step
+            assert "why" in step
+            assert "how" in step
             assert "verify" in step
             assert isinstance(step["how"], list)
             assert len(step["how"]) > 0

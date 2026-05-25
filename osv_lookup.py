@@ -22,6 +22,7 @@ import zipfile
 
 try:
     import requests
+
     _REQUESTS_AVAILABLE = True
 except ImportError:
     _REQUESTS_AVAILABLE = False
@@ -46,7 +47,7 @@ SUSPICIOUS_CDN_PATTERNS = [
 JS_PACKAGE_FILES = {"package.json", "package-lock.json"}
 
 # Request timeout — OSV API is generally fast
-REQUEST_TIMEOUT = 8   # seconds
+REQUEST_TIMEOUT = 8  # seconds
 
 
 def run_osv_checks(
@@ -74,14 +75,14 @@ def run_osv_checks(
       flags             list[str]
     """
     result = {
-        "zip_hash":        None,
+        "zip_hash": None,
         "osv_zip_matches": [],
-        "npm_packages":    [],
+        "npm_packages": [],
         "osv_pkg_matches": [],
-        "cdn_refs":        [],
-        "vt":              {"queried": False},
-        "osv_score":       0,
-        "flags":           [],
+        "cdn_refs": [],
+        "vt": {"queried": False},
+        "osv_score": 0,
+        "flags": [],
     }
 
     if zip_bytes is None:
@@ -97,7 +98,7 @@ def run_osv_checks(
         zip_hits = _query_osv_hash(zip_sha256)
         result["osv_zip_matches"] = zip_hits
         if zip_hits:
-            result["osv_score"] += 30   # Direct hash match = confirmed threat
+            result["osv_score"] += 30  # Direct hash match = confirmed threat
             result["flags"].append(
                 f"CONFIRMED: Extension ZIP hash matches {len(zip_hits)} OSV record(s): "
                 + ", ".join(h.get("id", "?") for h in zip_hits)
@@ -109,6 +110,7 @@ def run_osv_checks(
     if vt_cfg is not None and vt_cfg.get("enabled", False) and _REQUESTS_AVAILABLE:
         # Lazy import to keep the module loadable when virustotal_lookup is absent
         from virustotal_lookup import lookup_hash as _vt_lookup
+
         vt_result = _vt_lookup(zip_sha256, vt_cfg)
         result["vt"] = dict(vt_result)
         result["vt"]["queried"] = True
@@ -122,7 +124,7 @@ def run_osv_checks(
     # --- 3. Scan ZIP contents for npm packages and CDN refs ---------------
     npm_packages, cdn_refs = _scan_zip_contents(zip_bytes)
     result["npm_packages"] = npm_packages
-    result["cdn_refs"]     = cdn_refs
+    result["cdn_refs"] = cdn_refs
 
     if cdn_refs:
         result["osv_score"] += min(len(cdn_refs) * 5, 15)
@@ -139,11 +141,9 @@ def run_osv_checks(
         if pkg_hits:
             result["osv_score"] += 10
             for hit in pkg_hits:
-                pkg   = hit.get("_package", "unknown")
-                vuln  = hit.get("id", "unknown")
-                result["flags"].append(
-                    f"Bundled npm package {pkg} has known vulnerability {vuln}"
-                )
+                pkg = hit.get("_package", "unknown")
+                vuln = hit.get("id", "unknown")
+                result["flags"].append(f"Bundled npm package {pkg} has known vulnerability {vuln}")
 
     # Ceiling: 30 total points from this module (OSV + VT combined).
     # OSV-only used to cap at 20; we raised to 30 to make headroom for VT
@@ -156,6 +156,7 @@ def run_osv_checks(
 # ZIP scanning
 # ---------------------------------------------------------------------------
 
+
 def _scan_zip_contents(zip_bytes: bytes) -> tuple:
     """
     Open the extension ZIP and:
@@ -163,8 +164,8 @@ def _scan_zip_contents(zip_bytes: bytes) -> tuple:
       - Scan JS files for external CDN URL references
     Returns (npm_packages, cdn_refs).
     """
-    npm_packages = []   # list of {"name": str, "version": str, "ecosystem": "npm"}
-    cdn_refs     = []   # list of suspicious CDN URL strings
+    npm_packages = []  # list of {"name": str, "version": str, "ecosystem": "npm"}
+    cdn_refs = []  # list of suspicious CDN URL strings
 
     try:
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
@@ -182,11 +183,13 @@ def _scan_zip_contents(zip_bytes: bytes) -> tuple:
                             # Strip semver range prefixes like ^, ~, >=
                             version = re.sub(r"[^0-9.]", "", version_spec.split(" ")[0])
                             if version:
-                                npm_packages.append({
-                                    "name":      pkg_name,
-                                    "version":   version,
-                                    "ecosystem": "npm",
-                                })
+                                npm_packages.append(
+                                    {
+                                        "name": pkg_name,
+                                        "version": version,
+                                        "ecosystem": "npm",
+                                    }
+                                )
                     except (json.JSONDecodeError, KeyError):
                         pass
 
@@ -195,10 +198,7 @@ def _scan_zip_contents(zip_bytes: bytes) -> tuple:
                     try:
                         content = zf.read(name).decode("utf-8", errors="ignore")
                         for pattern in SUSPICIOUS_CDN_PATTERNS:
-                            matches = re.findall(
-                                r'https?://' + pattern + r'[^\s\'"]+',
-                                content
-                            )
+                            matches = re.findall(r"https?://" + pattern + r'[^\s\'"]+', content)
                             cdn_refs.extend(matches)
                     except Exception:
                         pass
@@ -206,12 +206,13 @@ def _scan_zip_contents(zip_bytes: bytes) -> tuple:
     except zipfile.BadZipFile:
         pass
 
-    return npm_packages, list(set(cdn_refs))   # deduplicate CDN refs
+    return npm_packages, list(set(cdn_refs))  # deduplicate CDN refs
 
 
 # ---------------------------------------------------------------------------
 # OSV API queries
 # ---------------------------------------------------------------------------
+
 
 def _query_osv_hash(sha256_hex: str) -> list:
     """
@@ -220,7 +221,7 @@ def _query_osv_hash(sha256_hex: str) -> list:
     """
     payload = {
         "hash": {
-            "type":  "sha256",
+            "type": "sha256",
             "value": sha256_hex,
         }
     }
@@ -235,19 +236,21 @@ def _query_osv_packages_batch(packages: list) -> list:
     """
     # Build batch query — OSV limits to ~1000 queries per batch, we're fine
     queries = []
-    for pkg in packages[:50]:   # Cap at 50 to avoid huge requests
-        queries.append({
-            "package": {
-                "name":      pkg["name"],
-                "ecosystem": pkg["ecosystem"],
-            },
-            "version": pkg["version"],
-        })
+    for pkg in packages[:50]:  # Cap at 50 to avoid huge requests
+        queries.append(
+            {
+                "package": {
+                    "name": pkg["name"],
+                    "ecosystem": pkg["ecosystem"],
+                },
+                "version": pkg["version"],
+            }
+        )
 
     if not queries:
         return []
 
-    payload  = {"queries": queries}
+    payload = {"queries": queries}
     all_hits = []
 
     try:
@@ -255,7 +258,7 @@ def _query_osv_packages_batch(packages: list) -> list:
         if resp.status_code != 200:
             return []
 
-        data    = resp.json()
+        data = resp.json()
         results = data.get("results", [])
 
         for i, result_set in enumerate(results):

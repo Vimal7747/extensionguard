@@ -108,7 +108,9 @@ def load_ttp_library(root: Path | str | None = None) -> str:
 
     log.info(
         "Loaded TTP library: %d files, %d chars, latest mtime %.0f",
-        len(md_files), len(assembled), latest_mtime,
+        len(md_files),
+        len(assembled),
+        latest_mtime,
     )
     return assembled
 
@@ -135,9 +137,9 @@ def library_stats(root: Path | str | None = None) -> dict:
     total_bytes = sum(f.stat().st_size for f in md_files)
     latest = max((f.stat().st_mtime for f in md_files), default=0)
     return {
-        "exists":       True,
-        "root":         str(root),
-        "files":        len(md_files),
-        "bytes":        total_bytes,
+        "exists": True,
+        "root": str(root),
+        "files": len(md_files),
+        "bytes": total_bytes,
         "latest_mtime": latest,
     }

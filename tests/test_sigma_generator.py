@@ -19,6 +19,7 @@ from sigma_generator import (
 # Rule catalog integrity
 # ---------------------------------------------------------------------------
 
+
 class TestRuleCatalog:
     def test_six_rules_emitted(self):
         """Should be one Sigma rule per behavioral_monitor rule (6)."""
@@ -29,9 +30,16 @@ class TestRuleCatalog:
     @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
     def test_every_rule_has_required_fields(self, rule):
         """Every rule must include the mandatory Sigma fields."""
-        for field in ("title", "description", "references",
-                      "tags", "logsource", "detection",
-                      "falsepositives", "level"):
+        for field in (
+            "title",
+            "description",
+            "references",
+            "tags",
+            "logsource",
+            "detection",
+            "falsepositives",
+            "level",
+        ):
             assert field in rule, f"{rule['rule_key']} missing {field!r}"
 
     @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
@@ -53,6 +61,7 @@ class TestRuleCatalog:
 # ---------------------------------------------------------------------------
 # UUID generation
 # ---------------------------------------------------------------------------
+
 
 class TestUuid:
     def test_uuid_is_valid_uuidv5(self):
@@ -76,6 +85,7 @@ class TestUuid:
 # YAML value escaping
 # ---------------------------------------------------------------------------
 
+
 class TestYamlValue:
     def test_string_quoted(self):
         assert _yaml_value("hello") == '"hello"'
@@ -87,7 +97,7 @@ class TestYamlValue:
         assert _yaml_value(42) == "42"
 
     def test_bool_normalised(self):
-        assert _yaml_value(True)  == "true"
+        assert _yaml_value(True) == "true"
         assert _yaml_value(False) == "false"
 
     def test_none_as_tilde(self):
@@ -97,6 +107,7 @@ class TestYamlValue:
 # ---------------------------------------------------------------------------
 # YAML emission - parses cleanly as PyYAML if installed (sanity check)
 # ---------------------------------------------------------------------------
+
 
 class TestEmitYaml:
     @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
@@ -117,8 +128,15 @@ class TestEmitYaml:
     def test_yaml_contains_signature_fields(self):
         """Every Sigma rule should contain title:, id:, status:, level: lines."""
         text = _emit_yaml(RULES[0])
-        for header in ("title:", "id:", "status:", "level:", "logsource:",
-                       "detection:", "condition:"):
+        for header in (
+            "title:",
+            "id:",
+            "status:",
+            "level:",
+            "logsource:",
+            "detection:",
+            "condition:",
+        ):
             assert header in text
 
     def test_yaml_contains_source_comment(self):
@@ -131,6 +149,7 @@ class TestEmitYaml:
 # ---------------------------------------------------------------------------
 # generate_all_rules and write_rules_to
 # ---------------------------------------------------------------------------
+
 
 class TestGenerate:
     def test_all_rules_returns_six(self):
@@ -175,12 +194,14 @@ class TestGenerate:
 # Cross-check: every behavioral_monitor RULE-NN is covered
 # ---------------------------------------------------------------------------
 
+
 class TestCoverageAgainstBehavioralMonitor:
     """If a new RULE is added to behavioral_monitor.py, the Sigma generator
     needs an update too. This test catches that drift early."""
 
     def test_every_behavioral_rule_has_a_sigma_rule(self):
         import behavioral_monitor as bm
+
         # behavioral_monitor exposes RULE-XX via _rule_to_mitre's mapping.
         # We can't directly enumerate them, but we can check the known set.
         bm_rules = {f"RULE-0{i}" for i in range(1, 7)}

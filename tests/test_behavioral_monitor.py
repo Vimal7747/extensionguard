@@ -20,14 +20,15 @@ import behavioral_monitor as bm
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fake_target():
     """A canned CDP target descriptor (background service worker)."""
     return {
-        "id":      "tab-id-xyz",
-        "title":   "Suspect Extension",
-        "url":     "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/sw.js",
-        "type":    "service_worker",
+        "id": "tab-id-xyz",
+        "title": "Suspect Extension",
+        "url": "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/sw.js",
+        "type": "service_worker",
         "_ext_id": "abcdefghijklmnopqrstuvwxyzabcdef",
     }
 
@@ -57,15 +58,16 @@ def _drain(queue):
 # Synchronous helpers
 # ---------------------------------------------------------------------------
 
+
 class TestMakeAlert:
     def test_minimal_alert_has_required_keys(self, fake_target):
         alert = bm._make_alert("RULE-01", "critical", fake_target, {})
-        assert alert["rule"]     == "RULE-01"
+        assert alert["rule"] == "RULE-01"
         assert alert["severity"] == "critical"
-        assert alert["extension"]["id"]    == fake_target["id"]
+        assert alert["extension"]["id"] == fake_target["id"]
         assert alert["extension"]["title"] == fake_target["title"]
         assert "alert_time" in alert
-        assert "mitre"      in alert
+        assert "mitre" in alert
 
     def test_detail_passed_through(self, fake_target):
         detail = {"description": "test", "url": "https://x.example/y"}
@@ -74,8 +76,7 @@ class TestMakeAlert:
 
     def test_mitre_techniques_populated(self, fake_target):
         """Each rule must map to at least one MITRE technique."""
-        for rule in ("RULE-01", "RULE-02", "RULE-03",
-                     "RULE-04", "RULE-05", "RULE-06"):
+        for rule in ("RULE-01", "RULE-02", "RULE-03", "RULE-04", "RULE-05", "RULE-06"):
             alert = bm._make_alert(rule, "high", fake_target, {})
             assert isinstance(alert["mitre"], list)
             assert len(alert["mitre"]) >= 1
@@ -85,14 +86,17 @@ class TestMakeAlert:
 
 
 class TestRuleToMitre:
-    @pytest.mark.parametrize("rule,expected_first", [
-        ("RULE-01", "T1071.001"),
-        ("RULE-02", "T1555.003"),
-        ("RULE-03", "T1530"),
-        ("RULE-04", "T1555.003"),
-        ("RULE-05", "T1176"),
-        ("RULE-06", "T1059.007"),
-    ])
+    @pytest.mark.parametrize(
+        "rule,expected_first",
+        [
+            ("RULE-01", "T1071.001"),
+            ("RULE-02", "T1555.003"),
+            ("RULE-03", "T1530"),
+            ("RULE-04", "T1555.003"),
+            ("RULE-05", "T1176"),
+            ("RULE-06", "T1059.007"),
+        ],
+    )
     def test_known_rule_maps_to_expected_technique(self, rule, expected_first):
         techniques = bm._rule_to_mitre(rule)
         assert techniques[0] == expected_first
@@ -106,20 +110,25 @@ class TestRuleToMitre:
 # Target enumeration
 # ---------------------------------------------------------------------------
 
+
 class TestGetExtensionTargets:
     def test_filters_extension_background_workers(self):
         """Only chrome-extension:// URLs of the right type should be returned."""
         cdp_response = [
-            {"type": "service_worker",
-             "url": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sw.js"},
-            {"type": "page",
-             "url": "https://github.com/"},   # Should be filtered
-            {"type": "background_page",
-             "url": "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bg.html"},
-            {"type": "worker",
-             "url": "chrome-extension://cccccccccccccccccccccccccccccccc/sw.js"},
-            {"type": "iframe",
-             "url": "chrome-extension://dddddddddddddddddddddddddddddddd/iframe.html"},
+            {
+                "type": "service_worker",
+                "url": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sw.js",
+            },
+            {"type": "page", "url": "https://github.com/"},  # Should be filtered
+            {
+                "type": "background_page",
+                "url": "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/bg.html",
+            },
+            {"type": "worker", "url": "chrome-extension://cccccccccccccccccccccccccccccccc/sw.js"},
+            {
+                "type": "iframe",
+                "url": "chrome-extension://dddddddddddddddddddddddddddddddd/iframe.html",
+            },
             # iframe type is NOT in the allowed types - should be filtered
         ]
         mock_resp = MagicMock()
@@ -137,10 +146,14 @@ class TestGetExtensionTargets:
     def test_filter_by_specific_ext_id(self):
         """When target_ext_id is given, only that extension's targets return."""
         cdp_response = [
-            {"type": "service_worker",
-             "url": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sw.js"},
-            {"type": "service_worker",
-             "url": "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/sw.js"},
+            {
+                "type": "service_worker",
+                "url": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sw.js",
+            },
+            {
+                "type": "service_worker",
+                "url": "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/sw.js",
+            },
         ]
         mock_resp = MagicMock()
         mock_resp.json.return_value = cdp_response
@@ -155,8 +168,11 @@ class TestGetExtensionTargets:
     def test_chrome_not_running_raises_runtime_error(self):
         """ConnectionError must become a clear RuntimeError with instructions."""
         import requests
-        with patch("behavioral_monitor.requests.get",
-                   side_effect=requests.exceptions.ConnectionError("refused")):
+
+        with patch(
+            "behavioral_monitor.requests.get",
+            side_effect=requests.exceptions.ConnectionError("refused"),
+        ):
             with pytest.raises(RuntimeError, match="localhost:9222"):
                 bm.get_extension_targets()
 
@@ -173,6 +189,7 @@ class TestGetExtensionTargets:
 # RULE-01: C2 beacon detection
 # ---------------------------------------------------------------------------
 
+
 class TestRule01C2Beacon:
     """The TeamPCP exfil pattern: periodic POSTs to *.workers.dev / *.pages.dev."""
 
@@ -181,8 +198,8 @@ class TestRule01C2Beacon:
         """First POST is high (not critical) - we need a second to confirm beacon."""
         params = {
             "request": {
-                "url":     "https://evil.workers.dev/collect",
-                "method":  "POST",
+                "url": "https://evil.workers.dev/collect",
+                "method": "POST",
                 "headers": {},
             }
         }
@@ -198,8 +215,8 @@ class TestRule01C2Beacon:
         """Two POSTs within BEACON_INTERVAL_SEC = a confirmed beacon = CRITICAL."""
         params = {
             "request": {
-                "url":     "https://evil.workers.dev/collect",
-                "method":  "POST",
+                "url": "https://evil.workers.dev/collect",
+                "method": "POST",
                 "headers": {},
             }
         }
@@ -224,8 +241,8 @@ class TestRule01C2Beacon:
         """RULE-01 fires on POST only - GET to *.workers.dev is just suspicious browsing."""
         params = {
             "request": {
-                "url":     "https://example.workers.dev/page",
-                "method":  "GET",
+                "url": "https://example.workers.dev/page",
+                "method": "GET",
                 "headers": {"Accept": "text/html"},
             }
         }
@@ -239,7 +256,7 @@ class TestRule01C2Beacon:
         """Cloudflare Pages is the other half of the TeamPCP exfil pattern."""
         params = {
             "request": {
-                "url":    "https://attacker.pages.dev/exfil",
+                "url": "https://attacker.pages.dev/exfil",
                 "method": "POST",
                 "headers": {},
             }
@@ -253,7 +270,7 @@ class TestRule01C2Beacon:
         """POST to a normal first-party API endpoint doesn't fire RULE-01."""
         params = {
             "request": {
-                "url":    "https://api.example.com/v1/users",
+                "url": "https://api.example.com/v1/users",
                 "method": "POST",
                 "headers": {},
             }
@@ -268,7 +285,7 @@ class TestRule01C2Beacon:
         'first POST' state - one extension's history shouldn't escalate another's."""
         params = {
             "request": {
-                "url":    "https://evil.workers.dev/x",
+                "url": "https://evil.workers.dev/x",
                 "method": "POST",
                 "headers": {},
             }
@@ -286,18 +303,18 @@ class TestRule01C2Beacon:
 # RULE-02: Session cookie exfil
 # ---------------------------------------------------------------------------
 
+
 class TestRule02CookieExfil:
     @pytest.mark.asyncio
     async def test_cookie_posted_to_github_flagged(self, fake_target, alert_queue):
         """POST with a session cookie to github.com = credential exfil."""
         params = {
             "request": {
-                "url":    "https://github.com/api/exfil",
+                "url": "https://github.com/api/exfil",
                 "method": "POST",
                 "headers": {
                     "Cookie": (
-                        "user_session=abc123def456ghi789jklmnopqrstuvwxyz1234567890; "
-                        "_octo=xyz"
+                        "user_session=abc123def456ghi789jklmnopqrstuvwxyz1234567890; _octo=xyz"
                     ),
                 },
             }
@@ -312,9 +329,9 @@ class TestRule02CookieExfil:
         """A non-session-shaped cookie (short) shouldn't trip RULE-02."""
         params = {
             "request": {
-                "url":    "https://github.com/api/x",
+                "url": "https://github.com/api/x",
                 "method": "POST",
-                "headers": {"Cookie": "lang=en; theme=dark"},   # No 32+ char token
+                "headers": {"Cookie": "lang=en; theme=dark"},  # No 32+ char token
             }
         }
         await bm._handle_network_request(params, fake_target, "ext-id", alert_queue)
@@ -326,7 +343,7 @@ class TestRule02CookieExfil:
         """No Cookie header at all - obviously not exfil."""
         params = {
             "request": {
-                "url":    "https://github.com/api/x",
+                "url": "https://github.com/api/x",
                 "method": "POST",
                 "headers": {},
             }
@@ -340,12 +357,13 @@ class TestRule02CookieExfil:
 # RULE-03: High-value domain access
 # ---------------------------------------------------------------------------
 
+
 class TestRule03HighValueDomain:
     @pytest.mark.asyncio
     async def test_post_to_github_api_flagged(self, fake_target, alert_queue):
         params = {
             "request": {
-                "url":    "https://api.github.com/user/keys",
+                "url": "https://api.github.com/user/keys",
                 "method": "POST",
                 "headers": {},
             }
@@ -360,7 +378,7 @@ class TestRule03HighValueDomain:
         """GET request that ASKS for JSON = API call = flagged."""
         params = {
             "request": {
-                "url":    "https://api.github.com/user",
+                "url": "https://api.github.com/user",
                 "method": "GET",
                 "headers": {"Accept": "application/json"},
             }
@@ -374,7 +392,7 @@ class TestRule03HighValueDomain:
         """User browsing github.com pages from an extension is normal."""
         params = {
             "request": {
-                "url":    "https://github.com/torvalds",
+                "url": "https://github.com/torvalds",
                 "method": "GET",
                 "headers": {"Accept": "text/html"},
             }
@@ -388,7 +406,7 @@ class TestRule03HighValueDomain:
         """*.aws.amazon.com is in HIGH_VALUE_DOMAINS."""
         params = {
             "request": {
-                "url":    "https://iam.aws.amazon.com/x",
+                "url": "https://iam.aws.amazon.com/x",
                 "method": "POST",
                 "headers": {},
             }
@@ -401,6 +419,7 @@ class TestRule03HighValueDomain:
 # ---------------------------------------------------------------------------
 # RULE-06: Obfuscated eval (via console messages)
 # ---------------------------------------------------------------------------
+
 
 class TestRule06ObfuscatedEval:
     @pytest.mark.asyncio
@@ -429,18 +448,14 @@ class TestRule06ObfuscatedEval:
 
     @pytest.mark.asyncio
     async def test_eval_unescape_flagged(self, fake_target, alert_queue):
-        params = {
-            "args": [{"value": "eval(unescape('%61%6c%65%72%74'))"}]
-        }
+        params = {"args": [{"value": "eval(unescape('%61%6c%65%72%74'))"}]}
         await bm._handle_console_call(params, fake_target, "ext-id", alert_queue)
         assert len([a for a in _drain(alert_queue) if a["rule"] == "RULE-06"]) == 1
 
     @pytest.mark.asyncio
     async def test_plain_console_log_not_flagged(self, fake_target, alert_queue):
         """A normal console.log() must not fire RULE-06."""
-        params = {
-            "args": [{"value": "user clicked button #42"}]
-        }
+        params = {"args": [{"value": "user clicked button #42"}]}
         await bm._handle_console_call(params, fake_target, "ext-id", alert_queue)
         rule06 = [a for a in _drain(alert_queue) if a["rule"] == "RULE-06"]
         assert rule06 == []
@@ -465,6 +480,7 @@ class TestRule06ObfuscatedEval:
 # Robustness: malformed CDP payloads must not crash the handler
 # ---------------------------------------------------------------------------
 
+
 class TestMalformedInput:
     @pytest.mark.asyncio
     async def test_missing_request_dict(self, fake_target, alert_queue):
@@ -476,9 +492,7 @@ class TestMalformedInput:
     @pytest.mark.asyncio
     async def test_non_string_url_handled(self, fake_target, alert_queue):
         """Some CDP events emit url=None when the request is malformed."""
-        params = {
-            "request": {"url": None, "method": "POST", "headers": {}}
-        }
+        params = {"request": {"url": None, "method": "POST", "headers": {}}}
         # urlparse(None) -> AttributeError, handler must swallow it
         await bm._handle_network_request(params, fake_target, "ext-id", alert_queue)
         assert _drain(alert_queue) == []
@@ -500,12 +514,18 @@ class TestMalformedInput:
 # Severity threshold helper
 # ---------------------------------------------------------------------------
 
+
 class TestRegexPatterns:
     """The compiled detection regexes themselves."""
 
     def test_c2_pattern_catches_known_hosts(self):
-        for host in ("evil.workers.dev", "x.pages.dev", "ANY.NGROK.IO",
-                     "tunnel.trycloudflare.com", "test.netlify.app"):
+        for host in (
+            "evil.workers.dev",
+            "x.pages.dev",
+            "ANY.NGROK.IO",
+            "tunnel.trycloudflare.com",
+            "test.netlify.app",
+        ):
             assert bm.C2_HOST_PATTERNS.search(host), f"Missed: {host}"
 
     def test_c2_pattern_ignores_clean_hosts(self):
@@ -513,8 +533,13 @@ class TestRegexPatterns:
             assert not bm.C2_HOST_PATTERNS.search(host), f"False positive: {host}"
 
     def test_high_value_domains_match(self):
-        for host in ("github.com", "api.github.com", "registry.npmjs.com",
-                     "team.slack.com", "iam.aws.amazon.com"):
+        for host in (
+            "github.com",
+            "api.github.com",
+            "registry.npmjs.com",
+            "team.slack.com",
+            "iam.aws.amazon.com",
+        ):
             assert bm.HIGH_VALUE_DOMAINS.search(host), f"Missed: {host}"
 
     def test_obfuscated_eval_regex(self):

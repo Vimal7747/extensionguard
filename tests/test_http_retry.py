@@ -19,6 +19,7 @@ def _no_sleep(_seconds):
 # Happy path
 # ---------------------------------------------------------------------------
 
+
 class TestSuccessfulFirstAttempt:
     def test_returns_response_on_200(self):
         mock_resp = MagicMock(status_code=200)
@@ -43,6 +44,7 @@ class TestSuccessfulFirstAttempt:
 # Retry logic
 # ---------------------------------------------------------------------------
 
+
 class TestRetries:
     @pytest.mark.parametrize("status", sorted(RETRIABLE_STATUS))
     def test_retriable_status_triggers_retry(self, status):
@@ -50,9 +52,11 @@ class TestRetries:
         mock_resp = MagicMock(status_code=status)
         with patch("adapters.http_retry.requests.post", return_value=mock_resp) as mock_post:
             resp, err = post_with_retry(
-                "http://x", max_attempts=3, sleep_fn=_no_sleep,
+                "http://x",
+                max_attempts=3,
+                sleep_fn=_no_sleep,
             )
-            assert mock_post.call_count == 3   # All 3 attempts used
+            assert mock_post.call_count == 3  # All 3 attempts used
             assert resp is None
             assert err is not None
             assert "exhausted" in err
@@ -72,7 +76,9 @@ class TestRetries:
             side_effect=requests.exceptions.Timeout("slow"),
         ) as mock_post:
             resp, err = post_with_retry(
-                "http://x", max_attempts=2, sleep_fn=_no_sleep,
+                "http://x",
+                max_attempts=2,
+                sleep_fn=_no_sleep,
             )
             assert mock_post.call_count == 2
             assert resp is None
@@ -84,7 +90,9 @@ class TestRetries:
             side_effect=requests.exceptions.ConnectionError("refused"),
         ) as mock_post:
             resp, err = post_with_retry(
-                "http://x", max_attempts=2, sleep_fn=_no_sleep,
+                "http://x",
+                max_attempts=2,
+                sleep_fn=_no_sleep,
             )
             assert mock_post.call_count == 2
             assert "exhausted" in err
@@ -105,6 +113,7 @@ class TestRetries:
 # Sleep behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestSleepBehaviour:
     def test_sleeps_between_attempts(self):
         """We should sleep between attempts but NOT after the final one."""
@@ -113,8 +122,7 @@ class TestSleepBehaviour:
         def record_sleep(s):
             sleeps.append(s)
 
-        with patch("adapters.http_retry.requests.post",
-                   return_value=MagicMock(status_code=500)):
+        with patch("adapters.http_retry.requests.post", return_value=MagicMock(status_code=500)):
             post_with_retry("http://x", max_attempts=3, sleep_fn=record_sleep)
 
         # 3 attempts -> 2 sleeps (between 1->2 and 2->3, none after 3)
@@ -122,16 +130,14 @@ class TestSleepBehaviour:
 
     def test_no_sleep_on_immediate_success(self):
         sleeps = []
-        with patch("adapters.http_retry.requests.post",
-                   return_value=MagicMock(status_code=200)):
+        with patch("adapters.http_retry.requests.post", return_value=MagicMock(status_code=200)):
             post_with_retry("http://x", sleep_fn=lambda s: sleeps.append(s))
         assert sleeps == []
 
     def test_backoff_grows(self):
         """Each sleep should be roughly 2x the previous (within jitter)."""
         sleeps = []
-        with patch("adapters.http_retry.requests.post",
-                   return_value=MagicMock(status_code=500)):
+        with patch("adapters.http_retry.requests.post", return_value=MagicMock(status_code=500)):
             post_with_retry(
                 "http://x",
                 max_attempts=4,
@@ -149,10 +155,12 @@ class TestSleepBehaviour:
 # Argument pass-through
 # ---------------------------------------------------------------------------
 
+
 class TestArgPassThrough:
     def test_json_data_passed_through(self):
-        with patch("adapters.http_retry.requests.post",
-                   return_value=MagicMock(status_code=200)) as mock_post:
+        with patch(
+            "adapters.http_retry.requests.post", return_value=MagicMock(status_code=200)
+        ) as mock_post:
             post_with_retry(
                 "http://x",
                 json={"hello": "world"},
@@ -161,14 +169,17 @@ class TestArgPassThrough:
                 sleep_fn=_no_sleep,
             )
             kwargs = mock_post.call_args.kwargs
-            assert kwargs["json"]    == {"hello": "world"}
+            assert kwargs["json"] == {"hello": "world"}
             assert kwargs["headers"] == {"X-Foo": "bar"}
             assert kwargs["timeout"] == 42
 
     def test_data_bytes_passed_through(self):
-        with patch("adapters.http_retry.requests.post",
-                   return_value=MagicMock(status_code=200)) as mock_post:
+        with patch(
+            "adapters.http_retry.requests.post", return_value=MagicMock(status_code=200)
+        ) as mock_post:
             post_with_retry(
-                "http://x", data=b"raw-bytes", sleep_fn=_no_sleep,
+                "http://x",
+                data=b"raw-bytes",
+                sleep_fn=_no_sleep,
             )
             assert mock_post.call_args.kwargs["data"] == b"raw-bytes"

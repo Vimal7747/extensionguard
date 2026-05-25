@@ -37,16 +37,16 @@ DEFAULT_QUARANTINE_ROOT = Path(__file__).parent.parent / "quarantine"
 
 
 def preserve(
-    extension_id:    str,
-    extension_name:  str,
-    crx_bytes:       bytes | None,
-    manifest:        dict,
-    triage_result:   dict | None = None,
-    alert_history:   list | None = None,
+    extension_id: str,
+    extension_name: str,
+    crx_bytes: bytes | None,
+    manifest: dict,
+    triage_result: dict | None = None,
+    alert_history: list | None = None,
     storage_snapshot: dict | None = None,
     quarantine_root: Path | None = None,
-    operator:        str | None  = None,
-    case_id:         str | None  = None,
+    operator: str | None = None,
+    case_id: str | None = None,
 ) -> dict:
     """
     Build a complete forensic evidence package and store it on disk.
@@ -98,13 +98,16 @@ def preserve(
             # 99 collisions in the same second is so anomalous it deserves
             # a forensically-traceable random suffix from tempfile
             import tempfile
-            case_dir = Path(tempfile.mkdtemp(
-                prefix=f"{case_folder_name}-overflow-",
-                dir=str(root),
-            ))
+
+            case_dir = Path(
+                tempfile.mkdtemp(
+                    prefix=f"{case_folder_name}-overflow-",
+                    dir=str(root),
+                )
+            )
 
     artifacts: dict = {}
-    hashes:    dict = {}
+    hashes: dict = {}
 
     # --- 1. Raw sample (CRX bytes) -----------------------------------------
     if crx_bytes:
@@ -151,29 +154,29 @@ def preserve(
 
     # --- 6. Chain of custody manifest --------------------------------------
     coc = {
-        "case_id":          case_id or case_folder_name,
-        "preserved_at":     datetime.now(timezone.utc).isoformat(),
-        "operator":         operator or getpass.getuser(),
-        "operator_host":    socket.gethostname(),
+        "case_id": case_id or case_folder_name,
+        "preserved_at": datetime.now(timezone.utc).isoformat(),
+        "operator": operator or getpass.getuser(),
+        "operator_host": socket.gethostname(),
         "extension": {
-            "id":             extension_id,
-            "name":           extension_name,
+            "id": extension_id,
+            "name": extension_name,
             "manifest_version": manifest.get("manifest_version"),
-            "claimed_version":  manifest.get("version"),
+            "claimed_version": manifest.get("version"),
         },
-        "artifacts":        list(artifacts.keys()),
-        "artifact_paths":   artifacts,
-        "sha256":           hashes,
-        "tool":             "ExtensionGuard Stage 5 - Forensic Preservation",
-        "tool_version":     "0.1.0",
+        "artifacts": list(artifacts.keys()),
+        "artifact_paths": artifacts,
+        "sha256": hashes,
+        "tool": "ExtensionGuard Stage 5 - Forensic Preservation",
+        "tool_version": "0.1.0",
         # Future operations should append to this list to maintain custody chain
         "custody_log": [
             {
-                "action":    "preserved",
-                "actor":     operator or getpass.getuser(),
-                "host":      socket.gethostname(),
+                "action": "preserved",
+                "actor": operator or getpass.getuser(),
+                "host": socket.gethostname(),
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "notes":     "Initial preservation by ExtensionGuard Stage 5",
+                "notes": "Initial preservation by ExtensionGuard Stage 5",
             }
         ],
     }
@@ -188,13 +191,13 @@ def preserve(
     )
 
     return {
-        "ok":             True,
-        "case_dir":       str(case_dir.resolve()),
-        "case_id":        coc["case_id"],
-        "artifacts":      artifacts,
-        "hashes":         hashes,
-        "manifest_path":  str(coc_path.resolve()),
-        "coc_hash":       coc_hash,
+        "ok": True,
+        "case_dir": str(case_dir.resolve()),
+        "case_id": coc["case_id"],
+        "artifacts": artifacts,
+        "hashes": hashes,
+        "manifest_path": str(coc_path.resolve()),
+        "coc_hash": coc_hash,
     }
 
 
@@ -209,13 +212,15 @@ def append_custody_action(case_dir: str, action: str, actor: str, notes: str = "
 
     try:
         coc = json.loads(coc_path.read_text(encoding="utf-8"))
-        coc.setdefault("custody_log", []).append({
-            "action":    action,
-            "actor":     actor,
-            "host":      socket.gethostname(),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "notes":     notes,
-        })
+        coc.setdefault("custody_log", []).append(
+            {
+                "action": action,
+                "actor": actor,
+                "host": socket.gethostname(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "notes": notes,
+            }
+        )
         coc_path.write_text(json.dumps(coc, indent=2), encoding="utf-8")
 
         # Recompute and update the side-car SHA256
@@ -248,17 +253,19 @@ def verify_case(case_dir: str) -> dict:
             continue
         actual = _sha256_file(artifact_path)
         if actual != expected_hash:
-            mismatches.append({
-                "file":     filename,
-                "issue":    "hash mismatch",
-                "expected": expected_hash,
-                "actual":   actual,
-            })
+            mismatches.append(
+                {
+                    "file": filename,
+                    "issue": "hash mismatch",
+                    "expected": expected_hash,
+                    "actual": actual,
+                }
+            )
 
     return {
-        "ok":         len(mismatches) == 0,
-        "verified":   len(expected) - len(mismatches),
-        "total":      len(expected),
+        "ok": len(mismatches) == 0,
+        "verified": len(expected) - len(mismatches),
+        "total": len(expected),
         "mismatches": mismatches,
     }
 
@@ -266,6 +273,7 @@ def verify_case(case_dir: str) -> dict:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _sha256_file(path: Path) -> str:
     """Compute SHA-256 of a file in chunks (handles large CRX files efficiently)."""

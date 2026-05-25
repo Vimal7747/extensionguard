@@ -40,14 +40,15 @@ from datetime import datetime, timezone
 try:
     import requests
     import websockets
+
     _DEPS_OK = True
 except ImportError:
     _DEPS_OK = False
 
 
 # Chrome DevTools Protocol endpoints
-CDP_HTTP_BASE     = "http://localhost:9222"
-CDP_JSON_TARGETS  = f"{CDP_HTTP_BASE}/json"
+CDP_HTTP_BASE = "http://localhost:9222"
+CDP_JSON_TARGETS = f"{CDP_HTTP_BASE}/json"
 CDP_NEW_WS_SUFFIX = "/json/new"
 
 # Detection rules — patterns that trigger alerts
@@ -82,8 +83,8 @@ OBFUSCATED_EVAL = re.compile(
 # Beacon detection: track POST frequency per extension
 # {ext_id -> {host -> [timestamp, ...]}}
 _beacon_tracker: dict = defaultdict(lambda: defaultdict(list))
-BEACON_INTERVAL_SEC = 55    # Flag if POSTs to same host < 55s apart
-BEACON_COUNT_LIMIT  = 3     # After this many suspicious posts, alert
+BEACON_INTERVAL_SEC = 55  # Flag if POSTs to same host < 55s apart
+BEACON_COUNT_LIMIT = 3  # After this many suspicious posts, alert
 
 
 def _now_iso() -> str:
@@ -93,28 +94,28 @@ def _now_iso() -> str:
 def _make_alert(rule: str, severity: str, extension_target: dict, detail: dict) -> dict:
     """Build a standardised alert dict compatible with Stage 4 webhook dispatch."""
     return {
-        "alert_time":      _now_iso(),
-        "rule":            rule,
-        "severity":        severity,   # "critical" / "high" / "medium"
+        "alert_time": _now_iso(),
+        "rule": rule,
+        "severity": severity,  # "critical" / "high" / "medium"
         "extension": {
-            "id":    extension_target.get("id"),
+            "id": extension_target.get("id"),
             "title": extension_target.get("title"),
-            "url":   extension_target.get("url"),
-            "type":  extension_target.get("type"),
+            "url": extension_target.get("url"),
+            "type": extension_target.get("type"),
         },
         "detail": detail,
-        "mitre":  _rule_to_mitre(rule),
+        "mitre": _rule_to_mitre(rule),
     }
 
 
 def _rule_to_mitre(rule: str) -> list:
     mapping = {
-        "RULE-01": ["T1071.001", "T1176"],        # C2 beacon
-        "RULE-02": ["T1555.003", "T1176"],         # Cookie exfil
-        "RULE-03": ["T1530", "T1555.003"],         # High-value domain access
-        "RULE-04": ["T1555.003", "T1074"],         # Storage staging (data staged)
-        "RULE-05": ["T1176"],                      # Lateral movement via management
-        "RULE-06": ["T1059.007"],                  # Obfuscated eval
+        "RULE-01": ["T1071.001", "T1176"],  # C2 beacon
+        "RULE-02": ["T1555.003", "T1176"],  # Cookie exfil
+        "RULE-03": ["T1530", "T1555.003"],  # High-value domain access
+        "RULE-04": ["T1555.003", "T1074"],  # Storage staging (data staged)
+        "RULE-05": ["T1176"],  # Lateral movement via management
+        "RULE-06": ["T1059.007"],  # Obfuscated eval
     }
     return mapping.get(rule, ["T1176"])
 
@@ -122,6 +123,7 @@ def _rule_to_mitre(rule: str) -> list:
 # ---------------------------------------------------------------------------
 # Chrome target enumeration
 # ---------------------------------------------------------------------------
+
 
 def get_extension_targets(target_ext_id: str | None = None) -> list:
     """
@@ -150,10 +152,12 @@ def get_extension_targets(target_ext_id: str | None = None) -> list:
     #                   or:  chrome-extension://<ext_id>/service_worker.js
     ext_targets = []
     for t in targets:
-        url  = t.get("url", "")
+        url = t.get("url", "")
         kind = t.get("type", "")
         if url.startswith("chrome-extension://") and kind in (
-            "background_page", "service_worker", "worker"
+            "background_page",
+            "service_worker",
+            "worker",
         ):
             # Extract extension ID from chrome-extension://<id>/...
             ext_id = url.split("/")[2]
@@ -170,14 +174,15 @@ def get_extension_targets(target_ext_id: str | None = None) -> list:
 # Per-extension CDP session
 # ---------------------------------------------------------------------------
 
+
 async def monitor_target(target: dict, alert_queue: asyncio.Queue, output_json: bool):
     """
     Open a CDP WebSocket session for a single extension target,
     enable the Network and Runtime domains, and process events.
     Puts alert dicts into alert_queue when detections fire.
     """
-    ws_url   = target.get("webSocketDebuggerUrl")
-    ext_id   = target.get("_ext_id", "unknown")
+    ws_url = target.get("webSocketDebuggerUrl")
+    ext_id = target.get("_ext_id", "unknown")
     ext_name = target.get("title", "unknown")
 
     if not ws_url:
@@ -217,9 +222,7 @@ async def monitor_target(target: dict, alert_queue: asyncio.Queue, output_json: 
 
                 # --- RULE-01 + RULE-02 + RULE-03: Network request events ---
                 if method == "Network.requestWillBeSent":
-                    await _handle_network_request(
-                        params, target, ext_id, alert_queue
-                    )
+                    await _handle_network_request(params, target, ext_id, alert_queue)
 
                 # --- RULE-04: DOM storage changes ---------------------------
                 elif method == "DOM.attributeModified":
@@ -227,9 +230,7 @@ async def monitor_target(target: dict, alert_queue: asyncio.Queue, output_json: 
 
                 # --- RULE-06: Runtime console messages with eval patterns ---
                 elif method == "Runtime.consoleAPICalled":
-                    await _handle_console_call(
-                        params, target, ext_id, alert_queue
-                    )
+                    await _handle_console_call(params, target, ext_id, alert_queue)
 
                 # We also listen for Runtime.exceptionThrown which can reveal
                 # obfuscation failures (common in Shai-Hulud eval chains)
@@ -237,10 +238,15 @@ async def monitor_target(target: dict, alert_queue: asyncio.Queue, output_json: 
                     exc = params.get("exceptionDetails", {})
                     text = str(exc)
                     if OBFUSCATED_EVAL.search(text):
-                        alert = _make_alert("RULE-06", "high", target, {
-                            "description": "Obfuscated eval() exception caught",
-                            "detail":      text[:300],
-                        })
+                        alert = _make_alert(
+                            "RULE-06",
+                            "high",
+                            target,
+                            {
+                                "description": "Obfuscated eval() exception caught",
+                                "detail": text[:300],
+                            },
+                        )
                         await alert_queue.put(alert)
 
     except websockets.exceptions.ConnectionClosed:
@@ -249,9 +255,7 @@ async def monitor_target(target: dict, alert_queue: asyncio.Queue, output_json: 
     except asyncio.CancelledError:
         # Pipeline shutdown - propagate so the asyncio runtime can clean up
         raise
-    except (websockets.exceptions.WebSocketException,
-            json.JSONDecodeError,
-            OSError) as exc:
+    except (websockets.exceptions.WebSocketException, json.JSONDecodeError, OSError) as exc:
         # Narrow set of expected failure modes. KeyboardInterrupt and
         # programming bugs (TypeError, NameError, etc.) are deliberately
         # NOT caught here - they should surface to the operator.
@@ -259,18 +263,21 @@ async def monitor_target(target: dict, alert_queue: asyncio.Queue, output_json: 
             print(f"  [Monitor] Error monitoring {ext_name}: {exc}")
 
 
-async def _handle_network_request(params: dict, target: dict, ext_id: str, alert_queue: asyncio.Queue):
+async def _handle_network_request(
+    params: dict, target: dict, ext_id: str, alert_queue: asyncio.Queue
+):
     """Evaluate a Network.requestWillBeSent event against detection rules."""
-    request     = params.get("request", {})
-    url         = request.get("url", "")
-    method      = request.get("method", "GET")
-    headers     = request.get("headers", {})
+    request = params.get("request", {})
+    url = request.get("url", "")
+    method = request.get("method", "GET")
+    headers = request.get("headers", {})
     # postData is part of the CDP payload but not currently used in detection rules.
     # Left here as a comment so a future RULE-07 (suspicious POST body content)
     # knows where to find it: request.get("postData", "")
 
     try:
         from urllib.parse import urlparse
+
         host = urlparse(url).netloc
         # urlparse on a non-str (None, bytes, etc.) can return non-str netloc
         # which then breaks our str-pattern regex below. Coerce defensively.
@@ -297,22 +304,32 @@ async def _handle_network_request(params: dict, target: dict, ext_id: str, alert
         if len(recent) >= 2:
             interval = recent[-1] - recent[-2]
             if interval < BEACON_INTERVAL_SEC:
-                alert = _make_alert("RULE-01", "critical", target, {
-                    "description": "Periodic POST to known exfil domain — C2 beacon pattern",
-                    "url":         url,
-                    "host":        host,
-                    "interval_sec": round(interval, 1),
-                    "post_count":  len(recent),
-                    "mitre_note":  "Matches TeamPCP 60-second beacon to *.workers.dev",
-                })
+                alert = _make_alert(
+                    "RULE-01",
+                    "critical",
+                    target,
+                    {
+                        "description": "Periodic POST to known exfil domain — C2 beacon pattern",
+                        "url": url,
+                        "host": host,
+                        "interval_sec": round(interval, 1),
+                        "post_count": len(recent),
+                        "mitre_note": "Matches TeamPCP 60-second beacon to *.workers.dev",
+                    },
+                )
                 await alert_queue.put(alert)
         elif len(recent) == 1:
             # First occurrence — still flag as suspicious (lower severity)
-            alert = _make_alert("RULE-01", "high", target, {
-                "description": "POST request to known exfil hosting domain",
-                "url":         url,
-                "host":        host,
-            })
+            alert = _make_alert(
+                "RULE-01",
+                "high",
+                target,
+                {
+                    "description": "POST request to known exfil hosting domain",
+                    "url": url,
+                    "host": host,
+                },
+            )
             await alert_queue.put(alert)
 
     # RULE-02: Cookie header being sent to a non-extension domain
@@ -324,13 +341,18 @@ async def _handle_network_request(params: dict, target: dict, ext_id: str, alert
             # Only alert if the request goes to a domain different from
             # where you'd expect those cookies to live
             if HIGH_VALUE_DOMAINS.search(host) and method == "POST":
-                alert = _make_alert("RULE-02", "high", target, {
-                    "description": "Session cookie being POSTed to high-value domain — "
-                                   "possible credential exfiltration",
-                    "url":         url,
-                    "host":        host,
-                    "cookie_len":  len(cookie_header),
-                })
+                alert = _make_alert(
+                    "RULE-02",
+                    "high",
+                    target,
+                    {
+                        "description": "Session cookie being POSTed to high-value domain — "
+                        "possible credential exfiltration",
+                        "url": url,
+                        "host": host,
+                        "cookie_len": len(cookie_header),
+                    },
+                )
                 await alert_queue.put(alert)
 
     # RULE-03: Extension accessing high-value auth domains
@@ -338,12 +360,17 @@ async def _handle_network_request(params: dict, target: dict, ext_id: str, alert
         # Only flag GET requests if they look like API calls (JSON response expected)
         accept_header = headers.get("Accept", "")
         if "json" in accept_header or method == "POST":
-            alert = _make_alert("RULE-03", "medium", target, {
-                "description": "Extension making API request to high-value domain",
-                "url":         url,
-                "host":        host,
-                "method":      method,
-            })
+            alert = _make_alert(
+                "RULE-03",
+                "medium",
+                target,
+                {
+                    "description": "Extension making API request to high-value domain",
+                    "url": url,
+                    "host": host,
+                    "method": method,
+                },
+            )
             await alert_queue.put(alert)
 
 
@@ -353,10 +380,15 @@ async def _handle_console_call(params: dict, target: dict, ext_id: str, alert_qu
     for arg in args:
         value = str(arg.get("value", ""))
         if OBFUSCATED_EVAL.search(value) or (BASE64_BLOB.search(value) and "eval" in value.lower()):
-            alert = _make_alert("RULE-06", "high", target, {
-                "description": "Console output contains obfuscated eval pattern",
-                "snippet":     value[:200],
-            })
+            alert = _make_alert(
+                "RULE-06",
+                "high",
+                target,
+                {
+                    "description": "Console output contains obfuscated eval pattern",
+                    "snippet": value[:200],
+                },
+            )
             await alert_queue.put(alert)
             break
 
@@ -364,6 +396,7 @@ async def _handle_console_call(params: dict, target: dict, ext_id: str, alert_qu
 # ---------------------------------------------------------------------------
 # Alert dispatcher (Stage 4 hook)
 # ---------------------------------------------------------------------------
+
 
 async def alert_dispatcher(alert_queue: asyncio.Queue, output_json: bool):
     """
@@ -378,17 +411,22 @@ async def alert_dispatcher(alert_queue: asyncio.Queue, output_json: bool):
             print(json.dumps(alert), flush=True)
         else:
             # Human-readable console output
-            sev    = alert["rule"]
-            rule   = alert["severity"].upper()
-            ext    = alert["extension"].get("title", "?")
+            sev = alert["rule"]
+            rule = alert["severity"].upper()
+            ext = alert["extension"].get("title", "?")
             detail = alert["detail"].get("description", "")
-            url    = alert["detail"].get("url", "")
-            ts     = alert["alert_time"]
+            url = alert["detail"].get("url", "")
+            ts = alert["alert_time"]
 
-            colour = "\033[91m" if alert["severity"] == "critical" else \
-                     "\033[93m" if alert["severity"] == "high"     else "\033[96m"
-            reset  = "\033[0m"
-            bold   = "\033[1m"
+            colour = (
+                "\033[91m"
+                if alert["severity"] == "critical"
+                else "\033[93m"
+                if alert["severity"] == "high"
+                else "\033[96m"
+            )
+            reset = "\033[0m"
+            bold = "\033[1m"
 
             print(f"\n{colour}{bold}[ALERT] {sev} {rule}{reset}")
             print(f"  Time:      {ts}")
@@ -407,6 +445,7 @@ async def alert_dispatcher(alert_queue: asyncio.Queue, output_json: bool):
 # ---------------------------------------------------------------------------
 # Main async entry point
 # ---------------------------------------------------------------------------
+
 
 async def run_monitor(target_ext_id: str | None, output_json: bool):
     """
@@ -433,14 +472,11 @@ async def run_monitor(target_ext_id: str | None, output_json: bool):
     alert_queue = asyncio.Queue()
 
     # Start the alert dispatcher as a background task
-    dispatcher_task = asyncio.create_task(
-        alert_dispatcher(alert_queue, output_json)
-    )
+    dispatcher_task = asyncio.create_task(alert_dispatcher(alert_queue, output_json))
 
     # Start one monitor coroutine per extension target
     monitor_tasks = [
-        asyncio.create_task(monitor_target(t, alert_queue, output_json))
-        for t in targets
+        asyncio.create_task(monitor_target(t, alert_queue, output_json)) for t in targets
     ]
 
     try:
@@ -455,6 +491,7 @@ async def run_monitor(target_ext_id: str | None, output_json: bool):
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(

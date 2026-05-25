@@ -17,15 +17,16 @@ from adapters import pagerduty, sentinel, slack, splunk
 # Sentinel - HMAC-SHA256 signed Log Analytics API
 # ---------------------------------------------------------------------------
 
+
 class TestSentinelAdapter:
     @pytest.fixture
     def cfg(self):
         return {
             "workspace_id": "test-workspace-id",
             # 'test' base64-encoded - real workspaces use a 64-byte base64 key
-            "shared_key":   base64.b64encode(b"super-secret-key-bytes").decode(),
-            "log_type":     "ExtensionGuardAlert",
-            "timeout_sec":  5,
+            "shared_key": base64.b64encode(b"super-secret-key-bytes").decode(),
+            "log_type": "ExtensionGuardAlert",
+            "timeout_sec": 5,
         }
 
     def test_successful_send(self, cfg, sample_alert):
@@ -52,9 +53,14 @@ class TestSentinelAdapter:
         request) and also patch the sleep so the test doesn't wait through
         the real backoff."""
         import requests
-        with patch("adapters.http_retry.requests.post",
-                   side_effect=requests.exceptions.ConnectionError("down")), \
-             patch("adapters.http_retry.time.sleep"):
+
+        with (
+            patch(
+                "adapters.http_retry.requests.post",
+                side_effect=requests.exceptions.ConnectionError("down"),
+            ),
+            patch("adapters.http_retry.time.sleep"),
+        ):
             result = sentinel.send(sample_alert, cfg)
             assert result["ok"] is False
             assert "exhausted" in result["error"].lower()
@@ -75,14 +81,20 @@ class TestSentinelAdapter:
     def test_auth_signature_is_deterministic(self, cfg):
         """Same inputs must produce the same HMAC signature."""
         sig1 = sentinel._build_auth_header(
-            workspace_id="ws", shared_key=cfg["shared_key"],
-            date="Fri, 01 Jan 2026 00:00:00 GMT", content_len=100,
-            content_type="application/json", resource="/api/logs",
+            workspace_id="ws",
+            shared_key=cfg["shared_key"],
+            date="Fri, 01 Jan 2026 00:00:00 GMT",
+            content_len=100,
+            content_type="application/json",
+            resource="/api/logs",
         )
         sig2 = sentinel._build_auth_header(
-            workspace_id="ws", shared_key=cfg["shared_key"],
-            date="Fri, 01 Jan 2026 00:00:00 GMT", content_len=100,
-            content_type="application/json", resource="/api/logs",
+            workspace_id="ws",
+            shared_key=cfg["shared_key"],
+            date="Fri, 01 Jan 2026 00:00:00 GMT",
+            content_len=100,
+            content_type="application/json",
+            resource="/api/logs",
         )
         assert sig1 == sig2
 
@@ -101,15 +113,16 @@ class TestSentinelAdapter:
 # Splunk HEC adapter
 # ---------------------------------------------------------------------------
 
+
 class TestSplunkAdapter:
     @pytest.fixture
     def cfg(self):
         return {
-            "hec_url":     "https://splunk.example.com:8088/services/collector/event",
-            "hec_token":   "00000000-0000-0000-0000-000000000000",
-            "index":       "security",
-            "sourcetype":  "extguard:alert",
-            "ssl_verify":  True,
+            "hec_url": "https://splunk.example.com:8088/services/collector/event",
+            "hec_token": "00000000-0000-0000-0000-000000000000",
+            "index": "security",
+            "sourcetype": "extguard:alert",
+            "ssl_verify": True,
             "timeout_sec": 5,
         }
 
@@ -161,20 +174,22 @@ class TestSplunkAdapter:
         """A malformed ISO timestamp should fall back to current time, not crash."""
         epoch = splunk._iso_to_epoch("not a timestamp")
         import time
-        assert abs(epoch - time.time()) < 5   # Close to "now"
+
+        assert abs(epoch - time.time()) < 5  # Close to "now"
 
 
 # ---------------------------------------------------------------------------
 # PagerDuty Events v2 adapter
 # ---------------------------------------------------------------------------
 
+
 class TestPagerDutyAdapter:
     @pytest.fixture
     def cfg(self):
         return {
             "integration_key": "12345abcdef67890",
-            "min_severity":    "high",
-            "timeout_sec":     5,
+            "min_severity": "high",
+            "timeout_sec": 5,
         }
 
     def test_critical_alert_dispatched(self, cfg, sample_alert):
@@ -190,11 +205,11 @@ class TestPagerDutyAdapter:
     def test_low_severity_alert_skipped(self, cfg):
         """min_severity=high means low and medium alerts are skipped, not dispatched."""
         low_alert = {
-            "rule":      "RULE-99",
-            "severity":  "low",
+            "rule": "RULE-99",
+            "severity": "low",
             "extension": {"id": "abc", "title": "X"},
-            "detail":    {"description": "noisy"},
-            "mitre":     [],
+            "detail": {"description": "noisy"},
+            "mitre": [],
         }
         # Even without mocking, this should not hit the network
         with patch("adapters.http_retry.requests.post") as mock_post:
@@ -240,14 +255,15 @@ class TestPagerDutyAdapter:
 # Slack Incoming Webhook adapter
 # ---------------------------------------------------------------------------
 
+
 class TestSlackAdapter:
     @pytest.fixture
     def cfg(self):
         return {
-            "webhook_url":  "https://hooks.slack.com/services/T0/B0/X",
+            "webhook_url": "https://hooks.slack.com/services/T0/B0/X",
             "min_severity": "medium",
-            "channel":      "#security",
-            "timeout_sec":  5,
+            "channel": "#security",
+            "timeout_sec": 5,
         }
 
     def test_successful_send(self, cfg, sample_alert):
@@ -262,11 +278,11 @@ class TestSlackAdapter:
         """min_severity=medium means low alerts are skipped."""
         low_alert = {
             "alert_time": "2026-01-01T00:00:00Z",
-            "rule":       "X",
-            "severity":   "low",
-            "extension":  {"title": "X"},
-            "detail":     {"description": "x"},
-            "mitre":      [],
+            "rule": "X",
+            "severity": "low",
+            "extension": {"title": "X"},
+            "detail": {"description": "x"},
+            "mitre": [],
         }
         with patch("adapters.http_retry.requests.post") as mock_post:
             result = slack.send(low_alert, cfg)
@@ -299,7 +315,7 @@ class TestSlackAdapter:
         """If Slack returns anything but 200+'ok', adapter must surface the failure."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = "invalid_payload"   # Slack error sentinel
+        mock_response.text = "invalid_payload"  # Slack error sentinel
         with patch("adapters.http_retry.requests.post", return_value=mock_response):
             result = slack.send(sample_alert, cfg)
             assert result["ok"] is False

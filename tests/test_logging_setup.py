@@ -22,6 +22,7 @@ from logging_setup import (
 # Redaction patterns - one test per credential type
 # ---------------------------------------------------------------------------
 
+
 class TestRedactionPatterns:
     def test_redacts_anthropic_api_key(self):
         text = "set ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234567890"
@@ -44,7 +45,7 @@ class TestRedactionPatterns:
         assert "[REDACTED]" in result
 
     def test_redacts_splunk_hec_token(self):
-        text = 'Authorization: Splunk 12345678-1234-1234-1234-123456789abc'
+        text = "Authorization: Splunk 12345678-1234-1234-1234-123456789abc"
         result = redact(text)
         assert "12345678-1234" not in result
 
@@ -89,28 +90,34 @@ class TestRealisticLeakShapes:
     payloads, error messages.
     """
 
-    @pytest.mark.parametrize("shape", [
-        "TOKEN=ghp_abcdefghijklmnopqrstuv",
-        "TOKEN: ghp_abcdefghijklmnopqrstuv",
-        "Authorization: token ghp_abcdefghijklmnopqrstuv",
-        '"token": "ghp_abcdefghijklmnopqrstuv"',
-        '(ghp_abcdefghijklmnopqrstuv)',
-        '[ghp_abcdefghijklmnopqrstuv]',
-        '{ghp_abcdefghijklmnopqrstuv}',
-        ',ghp_abcdefghijklmnopqrstuv,',
-        # Newline-separated (e.g., a token on its own line)
-        "\nghp_abcdefghijklmnopqrstuv\n",
-    ])
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "TOKEN=ghp_abcdefghijklmnopqrstuv",
+            "TOKEN: ghp_abcdefghijklmnopqrstuv",
+            "Authorization: token ghp_abcdefghijklmnopqrstuv",
+            '"token": "ghp_abcdefghijklmnopqrstuv"',
+            "(ghp_abcdefghijklmnopqrstuv)",
+            "[ghp_abcdefghijklmnopqrstuv]",
+            "{ghp_abcdefghijklmnopqrstuv}",
+            ",ghp_abcdefghijklmnopqrstuv,",
+            # Newline-separated (e.g., a token on its own line)
+            "\nghp_abcdefghijklmnopqrstuv\n",
+        ],
+    )
     def test_realistic_pat_shapes_all_redacted(self, shape):
         result = redact(shape)
         assert "abcdefghijkl" not in result, f"Leak in shape: {shape!r}"
         assert "ghp_[REDACTED]" in result
 
-    @pytest.mark.parametrize("shape", [
-        "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
-        "key 'AKIAIOSFODNN7EXAMPLE'",
-        "AKIAIOSFODNN7EXAMPLE expired",
-    ])
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+            "key 'AKIAIOSFODNN7EXAMPLE'",
+            "AKIAIOSFODNN7EXAMPLE expired",
+        ],
+    )
     def test_realistic_aws_key_shapes_all_redacted(self, shape):
         result = redact(shape)
         assert "IOSFODNN7" not in result, f"Leak in shape: {shape!r}"
@@ -136,7 +143,7 @@ class TestRealisticLeakShapes:
         )
         result = redact(text)
         assert "abcdefghijkl" not in result
-        assert "IOSFODNN7"   not in result
+        assert "IOSFODNN7" not in result
         assert "ghp_[REDACTED]" in result
         assert "AKIA[REDACTED]" in result
 
@@ -145,6 +152,7 @@ class TestRealisticLeakShapes:
 # Non-secret data must pass through unchanged
 # ---------------------------------------------------------------------------
 
+
 class TestNoOverRedaction:
     def test_plain_text_unchanged(self):
         assert redact("Hello, world!") == "Hello, world!"
@@ -152,7 +160,7 @@ class TestNoOverRedaction:
     def test_extension_id_not_redacted(self):
         """Chrome extension IDs are public identifiers - never sensitive."""
         ext_id = "abcdefghijklmnopqrstuvwxyzabcdef"
-        text   = f"blocking extension {ext_id}"
+        text = f"blocking extension {ext_id}"
         assert ext_id in redact(text)
 
     def test_normal_url_not_redacted(self):
@@ -169,6 +177,7 @@ class TestNoOverRedaction:
 # SecretRedactionFilter integration with the logging module
 # ---------------------------------------------------------------------------
 
+
 class TestRedactionFilter:
     @pytest.fixture
     def filter(self):
@@ -177,16 +186,25 @@ class TestRedactionFilter:
     def test_filter_returns_true_always(self, filter):
         """A redaction filter must never DROP records - just modify them."""
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="hello", args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="hello",
+            args=(),
+            exc_info=None,
         )
         assert filter.filter(record) is True
 
     def test_redacts_msg_string(self, filter):
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
             msg="key sk-ant-api03-abc123def456ghi789jkl012mno",
-            args=(), exc_info=None,
+            args=(),
+            exc_info=None,
         )
         filter.filter(record)
         assert "abc123def456" not in record.msg
@@ -194,7 +212,10 @@ class TestRedactionFilter:
     def test_redacts_args_tuple(self, filter):
         """log.info('token: %s', secret) should scrub the % arg too."""
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
             msg="token: %s",
             args=("sk-ant-api03-abcdefghijklmnopqrstuv",),
             exc_info=None,
@@ -235,6 +256,7 @@ class TestRedactionFilter:
 # End-to-end: build a logger with the filter, capture output, check redaction
 # ---------------------------------------------------------------------------
 
+
 class TestEndToEnd:
     def test_logger_with_filter_redacts(self, caplog):
         """Use pytest's caplog to capture log output and verify redaction."""
@@ -257,13 +279,20 @@ class TestEndToEnd:
 # JSON formatter
 # ---------------------------------------------------------------------------
 
+
 class TestJsonFormatter:
     def test_emits_valid_json(self):
         import json
+
         fmt = JsonFormatter()
         record = logging.LogRecord(
-            name="test", level=logging.INFO, pathname="", lineno=0,
-            msg="hello %s", args=("world",), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="hello %s",
+            args=("world",),
+            exc_info=None,
         )
         out = fmt.format(record)
         parsed = json.loads(out)

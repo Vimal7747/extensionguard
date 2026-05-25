@@ -31,17 +31,17 @@ from publisher_checker import check_publisher
 from update_velocity import analyse_version
 
 # ANSI colours (ASCII-safe, no Unicode box-drawing)
-RED    = "\033[91m"
+RED = "\033[91m"
 YELLOW = "\033[93m"
-GREEN  = "\033[92m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-RESET  = "\033[0m"
+GREEN = "\033[92m"
+CYAN = "\033[96m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
 
 RISK_COLOURS = {
-    "low":      GREEN,
-    "medium":   YELLOW,
-    "high":     RED,
+    "low": GREEN,
+    "medium": YELLOW,
+    "high": RED,
     "critical": RED + BOLD,
 }
 
@@ -106,7 +106,7 @@ def main():
         zip_bytes, manifest = parse_crx(args.extension_path)
     except (FileNotFoundError, ValueError) as exc:
         _error_exit(f"Failed to parse extension: {exc}")
-        return   # keeps type checker happy
+        return  # keeps type checker happy
 
     if not args.output_json:
         print(f"  Name:             {manifest.name}")
@@ -142,11 +142,11 @@ def main():
 
     # We pass the raw ZIP bytes so the publisher checker can extract the
     # CRX3 signing key if the manifest doesn't have a "key" field
-    crx_header_bytes = None   # TODO Stage 1c+: pass parsed CRX3 header bytes
+    crx_header_bytes = None  # TODO Stage 1c+: pass parsed CRX3 header bytes
     pub_result = check_publisher(
         manifest,
-        crx_header_bytes = crx_header_bytes,
-        query_cws        = network_ok,
+        crx_header_bytes=crx_header_bytes,
+        query_cws=network_ok,
     )
 
     if not args.output_json:
@@ -203,8 +203,15 @@ def main():
                 if flag not in (osv_result.get("cdn_refs") or []):
                     print(f"  {YELLOW}[!] {flag}{RESET}")
     else:
-        osv_result = {"zip_hash": None, "osv_zip_matches": [], "cdn_refs": [],
-                      "npm_packages": [], "osv_pkg_matches": [], "osv_score": 0, "flags": []}
+        osv_result = {
+            "zip_hash": None,
+            "osv_zip_matches": [],
+            "cdn_refs": [],
+            "npm_packages": [],
+            "osv_pkg_matches": [],
+            "osv_score": 0,
+            "flags": [],
+        }
         if not args.output_json:
             print(f"  {CYAN}[Skipped] --offline mode{RESET}")
 
@@ -214,20 +221,17 @@ def main():
     _stage_header("1e", "Update velocity analysis", args.output_json)
 
     velocity_result = analyse_version(
-        manifest_version = manifest.version,
-        extension_id     = pub_result.get("extension_id"),
-        cws_version      = pub_result.get("cws_version"),
-        extension_name   = manifest.name,
+        manifest_version=manifest.version,
+        extension_id=pub_result.get("extension_id"),
+        cws_version=pub_result.get("cws_version"),
+        extension_name=manifest.name,
     )
 
     if not args.output_json:
         prev_v = velocity_result.get("previous_version")
         if prev_v:
-            jump  = velocity_result.get("version_jump") or {}
-            delta = " / ".join(
-                f"{k}: {'+' if v > 0 else ''}{v}"
-                for k, v in jump.items() if v != 0
-            )
+            jump = velocity_result.get("version_jump") or {}
+            delta = " / ".join(f"{k}: {'+' if v > 0 else ''}{v}" for k, v in jump.items() if v != 0)
             print(f"  Previous seen: {prev_v} -> {manifest.version}  ({delta or 'no change'})")
         else:
             print("  First time seeing this extension (version recorded for future tracking)")
@@ -244,7 +248,7 @@ def main():
         + pub_result.get("pub_score", 0)
         + osv_result.get("osv_score", 0)
         + velocity_result.get("velocity_score", 0),
-        100
+        100,
     )
     composite_level = _score_to_level(composite_score)
 
@@ -263,7 +267,9 @@ def main():
             print(f"\n{CYAN}[Stage 2 skipped]{RESET} --no-ai flag set")
             _print_recommendation(composite_level, composite_score)
         else:
-            _print_json_no_ai(manifest, perm_score, pub_result, osv_result, velocity_result, args.extension_path)
+            _print_json_no_ai(
+                manifest, perm_score, pub_result, osv_result, velocity_result, args.extension_path
+            )
         return
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
@@ -295,6 +301,7 @@ def main():
 # ---------------------------------------------------------------------------
 # Display helpers
 # ---------------------------------------------------------------------------
+
 
 def _stage_header(num: str, title: str, output_json: bool):
     if not output_json:
@@ -328,12 +335,18 @@ def _print_human_report(result: TriageResult, pub: dict, osv: dict, vel: dict):
     osv_score = osv.get("osv_score", 0)
     vel_score = vel.get("velocity_score", 0)
     print(f"    Permission score:  {result.permission_score.total_score}/100")
-    print(f"    Publisher risk:    +{pub_score} pts  "
-          + (f"({len(pub.get('flags', []))} flags)" if pub.get("flags") else "(clean)"))
-    print(f"    OSV / hash:        +{osv_score} pts  "
-          + ("(matches found)" if osv.get("osv_zip_matches") else "(no matches)"))
-    print(f"    Version velocity:  +{vel_score} pts  "
-          + ("(suspicious jump)" if vel.get("is_suspicious") else "(normal)"))
+    print(
+        f"    Publisher risk:    +{pub_score} pts  "
+        + (f"({len(pub.get('flags', []))} flags)" if pub.get("flags") else "(clean)")
+    )
+    print(
+        f"    OSV / hash:        +{osv_score} pts  "
+        + ("(matches found)" if osv.get("osv_zip_matches") else "(no matches)")
+    )
+    print(
+        f"    Version velocity:  +{vel_score} pts  "
+        + ("(suspicious jump)" if vel.get("is_suspicious") else "(normal)")
+    )
 
     print(f"\n  {BOLD}Analyst Narrative:{RESET}")
     for line in result.analyst_narrative.strip().split("\n"):
@@ -357,9 +370,9 @@ def _print_human_report(result: TriageResult, pub: dict, osv: dict, vel: dict):
 def _print_recommendation(risk_level: str, score: int):
     actions = {
         "critical": f"{RED}{BOLD}BLOCK IMMEDIATELY - initiate remediation playbook{RESET}",
-        "high":     f"{RED}QUARANTINE - escalate to Tier-2 analyst{RESET}",
-        "medium":   f"{YELLOW}REVIEW - monitor for suspicious runtime behaviour{RESET}",
-        "low":      f"{GREEN}LOW RISK - continue standard monitoring{RESET}",
+        "high": f"{RED}QUARANTINE - escalate to Tier-2 analyst{RESET}",
+        "medium": f"{YELLOW}REVIEW - monitor for suspicious runtime behaviour{RESET}",
+        "low": f"{GREEN}LOW RISK - continue standard monitoring{RESET}",
     }
     print(
         f"  {BOLD}Recommendation ({score}/100):{RESET}  "
@@ -369,51 +382,51 @@ def _print_recommendation(risk_level: str, score: int):
 
 def _print_json_full(result: TriageResult, pub: dict, osv: dict, vel: dict, composite: int):
     output = {
-        "extension_name":    result.extension_name,
-        "file_path":         result.file_path,
-        "composite_score":   composite,
-        "ai_risk_score":     result.risk_score,
-        "risk_level":        result.risk_level,
-        "mitre_techniques":  result.mitre_techniques,
-        "iocs":              result.iocs,
+        "extension_name": result.extension_name,
+        "file_path": result.file_path,
+        "composite_score": composite,
+        "ai_risk_score": result.risk_score,
+        "risk_level": result.risk_level,
+        "mitre_techniques": result.mitre_techniques,
+        "iocs": result.iocs,
         "analyst_narrative": result.analyst_narrative,
         "stage_1_checks": {
             "permission_score": {
-                "total":    result.permission_score.total_score,
-                "level":    result.permission_score.risk_level,
-                "flagged":  result.permission_score.flagged_permissions,
-                "notes":    result.permission_score.notes,
+                "total": result.permission_score.total_score,
+                "level": result.permission_score.risk_level,
+                "flagged": result.permission_score.flagged_permissions,
+                "notes": result.permission_score.notes,
             },
             "publisher": {
-                "extension_id":      pub.get("extension_id"),
-                "cws_exists":        pub.get("cws_exists"),
-                "cws_version":       pub.get("cws_version"),
+                "extension_id": pub.get("extension_id"),
+                "cws_exists": pub.get("cws_exists"),
+                "cws_version": pub.get("cws_version"),
                 "suspicious_update": pub.get("suspicious_update"),
                 "risk_contribution": pub.get("pub_score"),
-                "flags":             pub.get("flags", []),
+                "flags": pub.get("flags", []),
             },
             "osv": {
-                "zip_sha256":    osv.get("zip_hash"),
-                "zip_matches":   len(osv.get("osv_zip_matches", [])),
-                "pkg_matches":   len(osv.get("osv_pkg_matches", [])),
-                "cdn_refs":      osv.get("cdn_refs", []),
+                "zip_sha256": osv.get("zip_hash"),
+                "zip_matches": len(osv.get("osv_zip_matches", [])),
+                "pkg_matches": len(osv.get("osv_pkg_matches", [])),
+                "cdn_refs": osv.get("cdn_refs", []),
                 "risk_contribution": osv.get("osv_score"),
-                "flags":         osv.get("flags", []),
+                "flags": osv.get("flags", []),
             },
             "velocity": {
-                "current_version":  vel.get("current_version"),
+                "current_version": vel.get("current_version"),
                 "previous_version": vel.get("previous_version"),
-                "cws_version":      vel.get("cws_version"),
-                "is_suspicious":    vel.get("is_suspicious"),
+                "cws_version": vel.get("cws_version"),
+                "is_suspicious": vel.get("is_suspicious"),
                 "risk_contribution": vel.get("velocity_score"),
-                "flags":            vel.get("flags", []),
+                "flags": vel.get("flags", []),
             },
         },
         "manifest_summary": {
-            "name":             result.manifest.name,
-            "version":          result.manifest.version,
+            "name": result.manifest.name,
+            "version": result.manifest.version,
             "manifest_version": result.manifest.manifest_version,
-            "permissions":      result.manifest.permissions,
+            "permissions": result.manifest.permissions,
             "host_permissions": result.manifest.host_permissions,
         },
     }
@@ -426,7 +439,7 @@ def _print_json_no_ai(manifest, perm_score, pub, osv, vel, file_path):
         + pub.get("pub_score", 0)
         + osv.get("osv_score", 0)
         + vel.get("velocity_score", 0),
-        100
+        100,
     )
     # Aggregate Stage 1 IOCs from each sub-check's flags — gives Stage 5 something
     # to feed the credential rotation playbook even without the AI narrative
@@ -437,30 +450,30 @@ def _print_json_no_ai(manifest, perm_score, pub, osv, vel, file_path):
     iocs += vel.get("flags", []) or []
 
     output = {
-        "extension_name":  manifest.name,
-        "file_path":       file_path,
-        "ai_triage":       None,
+        "extension_name": manifest.name,
+        "file_path": file_path,
+        "ai_triage": None,
         "composite_score": composite,
-        "risk_level":      _score_to_level(composite),
-        "iocs":            iocs,
-        "mitre_techniques": [],   # Populated only by AI triage stage
+        "risk_level": _score_to_level(composite),
+        "iocs": iocs,
+        "mitre_techniques": [],  # Populated only by AI triage stage
         "stage_1_checks": {
             "permission_score": {
-                "total":   perm_score.total_score,
-                "level":   perm_score.risk_level,
+                "total": perm_score.total_score,
+                "level": perm_score.risk_level,
                 "flagged": perm_score.flagged_permissions,
-                "notes":   perm_score.notes,
+                "notes": perm_score.notes,
             },
             "publisher": pub,
-            "osv":       osv,
-            "velocity":  vel,
+            "osv": osv,
+            "velocity": vel,
         },
         # manifest_summary is consumed by remediation.py to drive the rotation playbook
         "manifest_summary": {
-            "name":             manifest.name,
-            "version":          manifest.version,
+            "name": manifest.name,
+            "version": manifest.version,
             "manifest_version": manifest.manifest_version,
-            "permissions":      manifest.permissions,
+            "permissions": manifest.permissions,
             "host_permissions": manifest.host_permissions,
         },
     }
@@ -484,6 +497,7 @@ def _load_vt_config() -> dict | None:
     Returns None if the file or section is absent - which signals "skip VT".
     """
     from pathlib import Path
+
     config_path = Path("extguard.conf.json")
     if not config_path.exists():
         return None

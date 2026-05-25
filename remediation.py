@@ -39,18 +39,19 @@ from remediators import chrome_killer, cred_rotation, forensics
 # Stage 4 integration - used to resolve the PD incident after kill
 try:
     from adapters import pagerduty
+
     _PD_AVAILABLE = True
 except ImportError:
     _PD_AVAILABLE = False
 
 
 # ANSI colours
-RED    = "\033[91m"
+RED = "\033[91m"
 YELLOW = "\033[93m"
-GREEN  = "\033[92m"
-CYAN   = "\033[96m"
-BOLD   = "\033[1m"
-RESET  = "\033[0m"
+GREEN = "\033[92m"
+CYAN = "\033[96m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
 
 
 def main():
@@ -148,20 +149,22 @@ def main():
     if inputs is None:
         sys.exit(1)
 
-    ext_id        = inputs["ext_id"]
-    ext_name      = inputs["ext_name"]
-    crx_bytes     = inputs["crx_bytes"]
-    manifest_raw  = inputs["manifest_raw"]
+    ext_id = inputs["ext_id"]
+    ext_name = inputs["ext_name"]
+    crx_bytes = inputs["crx_bytes"]
+    manifest_raw = inputs["manifest_raw"]
     triage_result = inputs["triage_result"]
-    host_perms    = inputs["host_perms"]
-    iocs          = inputs["iocs"]
+    host_perms = inputs["host_perms"]
+    iocs = inputs["iocs"]
 
     print(f"Target extension:  {BOLD}{ext_name}{RESET}")
     print(f"Extension ID:      {ext_id or '(none - no signing key)'}")
     print(f"Host permissions:  {', '.join(host_perms) or '(none)'}\n")
 
     if not ext_id and not args.no_kill:
-        print(f"{YELLOW}[!] No extension ID available - cannot blocklist. Kill step will be skipped.{RESET}\n")
+        print(
+            f"{YELLOW}[!] No extension ID available - cannot blocklist. Kill step will be skipped.{RESET}\n"
+        )
 
     case_dir = None
 
@@ -172,24 +175,26 @@ def main():
         print(f"{BOLD}[Step 1/5] PRESERVE - quarantining evidence...{RESET}")
 
         if args.dry_run:
-            print(f"  {CYAN}[DRY-RUN] Would write CRX bytes, manifest, triage, alerts to quarantine/{RESET}\n")
+            print(
+                f"  {CYAN}[DRY-RUN] Would write CRX bytes, manifest, triage, alerts to quarantine/{RESET}\n"
+            )
         else:
             preserve_result = forensics.preserve(
-                extension_id    = ext_id or "",
-                extension_name  = ext_name,
-                crx_bytes       = crx_bytes,
-                manifest        = manifest_raw,
-                triage_result   = triage_result,
-                operator        = getpass.getuser(),
-                case_id         = args.case_id,
+                extension_id=ext_id or "",
+                extension_name=ext_name,
+                crx_bytes=crx_bytes,
+                manifest=manifest_raw,
+                triage_result=triage_result,
+                operator=getpass.getuser(),
+                case_id=args.case_id,
             )
             if preserve_result["ok"]:
                 case_dir = preserve_result["case_dir"]
                 print(f"  {GREEN}OK{RESET}  Case folder:    {case_dir}")
                 print(f"      Case ID:        {preserve_result['case_id']}")
                 print(f"      Artifacts:      {len(preserve_result['artifacts'])}")
-                for name, path in preserve_result['artifacts'].items():
-                    sha = preserve_result['hashes'].get(Path(path).name, '?')[:16]
+                for name, path in preserve_result["artifacts"].items():
+                    sha = preserve_result["hashes"].get(Path(path).name, "?")[:16]
                     print(f"        - {name:8s}  {Path(path).name}  (sha256={sha}...)")
                 print(f"      CoC hash:       {preserve_result['coc_hash'][:16]}...\n")
             else:
@@ -207,20 +212,26 @@ def main():
 
         if kill_result["ok"]:
             if args.dry_run:
-                print(f"  {CYAN}[DRY-RUN]{RESET} {kill_result['details'].get('note', 'Would block')}\n")
+                print(
+                    f"  {CYAN}[DRY-RUN]{RESET} {kill_result['details'].get('note', 'Would block')}\n"
+                )
             elif kill_result["details"].get("already_blocked"):
-                print(f"  {GREEN}OK{RESET}  Extension already in blocklist (slot {kill_result['details'].get('slot')})\n")
+                print(
+                    f"  {GREEN}OK{RESET}  Extension already in blocklist (slot {kill_result['details'].get('slot')})\n"
+                )
             else:
                 slot = kill_result["details"].get("slot", "?")
-                print(f"  {GREEN}OK{RESET}  Added to blocklist (slot {slot}). Effective on next Chrome restart.\n")
+                print(
+                    f"  {GREEN}OK{RESET}  Added to blocklist (slot {slot}). Effective on next Chrome restart.\n"
+                )
 
             # Update CoC log
             if case_dir and not args.dry_run:
                 forensics.append_custody_action(
-                    case_dir = case_dir,
-                    action   = "blocklisted",
-                    actor    = getpass.getuser(),
-                    notes    = f"Added to Chrome blocklist via {kill_result['method']}",
+                    case_dir=case_dir,
+                    action="blocklisted",
+                    actor=getpass.getuser(),
+                    notes=f"Added to Chrome blocklist via {kill_result['method']}",
                 )
         else:
             print(f"  {RED}FAIL{RESET}  {kill_result.get('error')}\n")
@@ -236,15 +247,17 @@ def main():
         print(f"{BOLD}[Step 3/5] PLAYBOOK - generating credential rotation runbook...{RESET}")
 
         playbook = cred_rotation.generate_playbook(
-            host_permissions = host_perms,
-            iocs             = iocs,
-            extension_name   = ext_name,
-            case_id          = args.case_id or (Path(case_dir).name if case_dir else None),
-            output_format    = "both",
+            host_permissions=host_perms,
+            iocs=iocs,
+            extension_name=ext_name,
+            case_id=args.case_id or (Path(case_dir).name if case_dir else None),
+            output_format="both",
         )
 
         if not playbook["applicable"]:
-            print(f"  {GREEN}OK{RESET}  No tracked credential stores affected - no rotation needed.\n")
+            print(
+                f"  {GREEN}OK{RESET}  No tracked credential stores affected - no rotation needed.\n"
+            )
         else:
             colour = RED if playbook["severity"] == "critical" else YELLOW
             print(f"  Affected stores:    {colour}{', '.join(playbook['applicable'])}{RESET}")
@@ -258,13 +271,15 @@ def main():
                     print(f"  Saved {fmt:8s}:  {path}")
 
                 forensics.append_custody_action(
-                    case_dir = case_dir,
-                    action   = "playbook_generated",
-                    actor    = getpass.getuser(),
-                    notes    = f"Rotation playbook for: {', '.join(playbook['applicable'])}",
+                    case_dir=case_dir,
+                    action="playbook_generated",
+                    actor=getpass.getuser(),
+                    notes=f"Rotation playbook for: {', '.join(playbook['applicable'])}",
                 )
             elif args.dry_run:
-                print(f"  {CYAN}[DRY-RUN] Would write rotation_playbook.md + rotation_playbook.json{RESET}")
+                print(
+                    f"  {CYAN}[DRY-RUN] Would write rotation_playbook.md + rotation_playbook.json{RESET}"
+                )
             print()
     else:
         print(f"{CYAN}[Step 3/5] PLAYBOOK - skipped (--no-playbook){RESET}\n")
@@ -279,24 +294,32 @@ def main():
         if cfg and cfg.get("enabled"):
             if args.dry_run:
                 dedup = f"extguard-{args.rule}-{ext_id}"
-                print(f"  {CYAN}[DRY-RUN]{RESET} Would resolve PD incident with dedup_key={dedup}\n")
+                print(
+                    f"  {CYAN}[DRY-RUN]{RESET} Would resolve PD incident with dedup_key={dedup}\n"
+                )
             else:
                 pd_result = pagerduty.resolve(args.rule, ext_id, cfg)
                 if pd_result["ok"]:
                     print(f"  {GREEN}OK{RESET}  PagerDuty incident resolved.\n")
                     if case_dir:
                         forensics.append_custody_action(
-                            case_dir = case_dir,
-                            action   = "pd_resolved",
-                            actor    = getpass.getuser(),
-                            notes    = f"PD incident dedup_key=extguard-{args.rule}-{ext_id}",
+                            case_dir=case_dir,
+                            action="pd_resolved",
+                            actor=getpass.getuser(),
+                            notes=f"PD incident dedup_key=extguard-{args.rule}-{ext_id}",
                         )
                 else:
                     print(f"  {RED}FAIL{RESET}  {pd_result.get('error')}\n")
         else:
             print(f"  {CYAN}Skipped{RESET}  PagerDuty adapter disabled in config.\n")
     else:
-        reason = "--no-pd-resolve" if args.no_pd_resolve else "no extension ID" if not ext_id else "PD adapter missing"
+        reason = (
+            "--no-pd-resolve"
+            if args.no_pd_resolve
+            else "no extension ID"
+            if not ext_id
+            else "PD adapter missing"
+        )
         print(f"{CYAN}[Step 4/5] RESOLVE - skipped ({reason}){RESET}\n")
 
     # ===========================================================================
@@ -318,19 +341,20 @@ def main():
 # Input-gathering helpers
 # ---------------------------------------------------------------------------
 
+
 def _gather_inputs(args) -> dict | None:
     """
     Build the standard input dict from either --from-triage or --ext-id+--crx.
     Returns a dict or None on failure.
     """
     inputs = {
-        "ext_id":        None,
-        "ext_name":      "Unknown Extension",
-        "crx_bytes":     None,
-        "manifest_raw":  {},
+        "ext_id": None,
+        "ext_name": "Unknown Extension",
+        "crx_bytes": None,
+        "manifest_raw": {},
         "triage_result": None,
-        "host_perms":    [],
-        "iocs":          [],
+        "host_perms": [],
+        "iocs": [],
     }
 
     if args.from_triage:
@@ -345,22 +369,22 @@ def _gather_inputs(args) -> dict | None:
             return None
 
         inputs["triage_result"] = triage
-        inputs["ext_name"]      = triage.get("extension_name", "Unknown")
-        inputs["iocs"]          = triage.get("iocs", [])
+        inputs["ext_name"] = triage.get("extension_name", "Unknown")
+        inputs["iocs"] = triage.get("iocs", [])
 
         stage1 = triage.get("stage_1_checks", {})
-        pub    = stage1.get("publisher", {})
-        ms     = triage.get("manifest_summary", {})
+        pub = stage1.get("publisher", {})
+        ms = triage.get("manifest_summary", {})
 
         # CLI --ext-id overrides the value extracted from the triage JSON
         # (useful when the triage was run on a bare manifest with no signing key)
-        inputs["ext_id"]       = args.ext_id or pub.get("extension_id")
-        inputs["host_perms"]   = ms.get("host_permissions", [])
+        inputs["ext_id"] = args.ext_id or pub.get("extension_id")
+        inputs["host_perms"] = ms.get("host_permissions", [])
         inputs["manifest_raw"] = {
-            "name":             ms.get("name"),
-            "version":          ms.get("version"),
+            "name": ms.get("name"),
+            "version": ms.get("version"),
             "manifest_version": ms.get("manifest_version"),
-            "permissions":      ms.get("permissions", []),
+            "permissions": ms.get("permissions", []),
             "host_permissions": ms.get("host_permissions", []),
         }
 
@@ -376,15 +400,17 @@ def _gather_inputs(args) -> dict | None:
         if args.crx:
             try:
                 zip_bytes, manifest = parse_crx(args.crx)
-                inputs["crx_bytes"]    = zip_bytes
+                inputs["crx_bytes"] = zip_bytes
                 inputs["manifest_raw"] = manifest.raw
-                inputs["ext_name"]     = manifest.name
-                inputs["host_perms"]   = manifest.host_permissions
+                inputs["ext_name"] = manifest.name
+                inputs["host_perms"] = manifest.host_permissions
             except Exception as exc:
                 print(f"{RED}[ERROR]{RESET} Failed to parse CRX: {exc}")
                 return None
         else:
-            print(f"{YELLOW}[!] --ext-id given without --crx - preservation will be skeleton-only{RESET}")
+            print(
+                f"{YELLOW}[!] --ext-id given without --crx - preservation will be skeleton-only{RESET}"
+            )
 
     return inputs
 
@@ -393,7 +419,7 @@ def _load_pd_config(config_path: str) -> dict | None:
     """Load the pagerduty section from extguard.conf.json."""
     try:
         raw = json.loads(Path(config_path).read_text(encoding="utf-8"))
-        pd  = raw.get("pagerduty", {})
+        pd = raw.get("pagerduty", {})
         return {k: v for k, v in pd.items() if not k.startswith("_")}
     except (OSError, json.JSONDecodeError):
         return None
@@ -403,6 +429,7 @@ def _load_pd_config(config_path: str) -> dict | None:
 # Verification mode
 # ---------------------------------------------------------------------------
 
+
 def _run_verify(case_dir: str):
     """Verify SHA-256 hashes for an existing case folder."""
     print(f"\n{BOLD}Verifying case integrity: {case_dir}{RESET}\n")
@@ -410,9 +437,13 @@ def _run_verify(case_dir: str):
     result = forensics.verify_case(case_dir)
 
     if result["ok"]:
-        print(f"  {GREEN}OK{RESET}  All {result['verified']}/{result['total']} artifacts match the recorded SHA-256 hashes.\n")
+        print(
+            f"  {GREEN}OK{RESET}  All {result['verified']}/{result['total']} artifacts match the recorded SHA-256 hashes.\n"
+        )
     else:
-        print(f"  {RED}FAIL{RESET}  {len(result['mismatches'])} of {result['total']} artifacts FAILED verification:\n")
+        print(
+            f"  {RED}FAIL{RESET}  {len(result['mismatches'])} of {result['total']} artifacts FAILED verification:\n"
+        )
         for m in result["mismatches"]:
             print(f"    - {m['file']}: {m['issue']}")
             if m.get("expected"):

@@ -38,7 +38,7 @@ log = get_logger(__name__)
 VT_FILE_URL = "https://www.virustotal.com/api/v3/files/{sha256}"
 
 # Default timeout - VT is generally fast (<2s) for cached hashes
-REQUEST_TIMEOUT = 8   # seconds
+REQUEST_TIMEOUT = 8  # seconds
 
 
 def lookup_hash(sha256_hex: str, cfg: dict | None = None) -> dict:
@@ -67,17 +67,17 @@ def lookup_hash(sha256_hex: str, cfg: dict | None = None) -> dict:
     """
     cfg = cfg or {}
     result = {
-        "ok":         False,
-        "found":      False,
-        "malicious":  0,
+        "ok": False,
+        "found": False,
+        "malicious": 0,
         "suspicious": 0,
-        "harmless":   0,
+        "harmless": 0,
         "undetected": 0,
-        "total":      0,
-        "permalink":  None,
-        "score":      0,
-        "flags":      [],
-        "error":      None,
+        "total": 0,
+        "permalink": None,
+        "score": 0,
+        "flags": [],
+        "error": None,
     }
 
     # Opt-out toggle - some teams can't legally send hashes to VT
@@ -101,7 +101,7 @@ def lookup_hash(sha256_hex: str, cfg: dict | None = None) -> dict:
     url = VT_FILE_URL.format(sha256=sha256_hex.lower())
     headers = {
         "x-apikey": api_key,
-        "Accept":   "application/json",
+        "Accept": "application/json",
     }
 
     try:
@@ -148,14 +148,14 @@ def lookup_hash(sha256_hex: str, cfg: dict | None = None) -> dict:
         result["error"] = f"Unexpected VT response shape: {exc}"
         return result
 
-    result["ok"]         = True
-    result["found"]      = True
-    result["malicious"]  = stats.get("malicious",  0)
+    result["ok"] = True
+    result["found"] = True
+    result["malicious"] = stats.get("malicious", 0)
     result["suspicious"] = stats.get("suspicious", 0)
-    result["harmless"]   = stats.get("harmless",   0)
+    result["harmless"] = stats.get("harmless", 0)
     result["undetected"] = stats.get("undetected", 0)
-    result["total"]      = sum(stats.values())
-    result["permalink"]  = f"https://www.virustotal.com/gui/file/{sha256_hex.lower()}"
+    result["total"] = sum(stats.values())
+    result["permalink"] = f"https://www.virustotal.com/gui/file/{sha256_hex.lower()}"
 
     # Score contribution: scaled to a 0-30 contribution to match the OSV
     # adapter's ceiling. Reasoning:
@@ -167,14 +167,12 @@ def lookup_hash(sha256_hex: str, cfg: dict | None = None) -> dict:
     if m >= 11:
         result["score"] = 30
         result["flags"].append(
-            f"VirusTotal: {m}/{result['total']} engines flagged this hash - "
-            f"CONFIRMED MALICIOUS"
+            f"VirusTotal: {m}/{result['total']} engines flagged this hash - CONFIRMED MALICIOUS"
         )
     elif m >= 3:
         result["score"] = 20
         result["flags"].append(
-            f"VirusTotal: {m}/{result['total']} engines flagged this hash - "
-            f"likely malicious"
+            f"VirusTotal: {m}/{result['total']} engines flagged this hash - likely malicious"
         )
     elif m >= 1:
         result["score"] = 10
@@ -188,14 +186,15 @@ def lookup_hash(sha256_hex: str, cfg: dict | None = None) -> dict:
     if result["suspicious"] >= 3:
         bonus = min(10, result["suspicious"] * 2)
         result["score"] = min(30, result["score"] + bonus)
-        result["flags"].append(
-            f"VirusTotal: {result['suspicious']} engines flagged as suspicious"
-        )
+        result["flags"].append(f"VirusTotal: {result['suspicious']} engines flagged as suspicious")
 
     log.info(
         "VirusTotal lookup: hash=%s mal=%d susp=%d total=%d score=+%d",
-        sha256_hex[:12], result["malicious"], result["suspicious"],
-        result["total"], result["score"],
+        sha256_hex[:12],
+        result["malicious"],
+        result["suspicious"],
+        result["total"],
+        result["score"],
     )
     return result
 
@@ -203,6 +202,7 @@ def lookup_hash(sha256_hex: str, cfg: dict | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _looks_like_sha256(s: str) -> bool:
     """A SHA-256 hex digest is exactly 64 lowercase hex chars."""

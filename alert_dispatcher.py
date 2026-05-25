@@ -55,8 +55,10 @@ def load_config(path=None, validate: bool = True) -> dict:
     config_path = Path(path) if path else DEFAULT_CONFIG_PATH
 
     if not config_path.exists():
-        print(f"[Config] No config file found at {config_path}. Using defaults (all adapters disabled).",
-              file=sys.stderr)
+        print(
+            f"[Config] No config file found at {config_path}. Using defaults (all adapters disabled).",
+            file=sys.stderr,
+        )
         return _default_config()
 
     try:
@@ -91,16 +93,16 @@ def _strip_comments(obj):
 
 def _default_config() -> dict:
     return {
-        "sentinel":  {"enabled": False},
-        "splunk":    {"enabled": False},
+        "sentinel": {"enabled": False},
+        "splunk": {"enabled": False},
         "pagerduty": {"enabled": False},
-        "slack":     {"enabled": False},
+        "slack": {"enabled": False},
         "dispatch": {
-            "dedup_ttl_seconds":    300,
+            "dedup_ttl_seconds": 300,
             "escalation_threshold": 3,
-            "min_severity":         "low",
+            "min_severity": "low",
             "also_dispatch_triage": True,
-            "triage_min_score":     45,
+            "triage_min_score": 45,
         },
     }
 
@@ -108,6 +110,7 @@ def _default_config() -> dict:
 # ---------------------------------------------------------------------------
 # Deduplication and escalation state
 # ---------------------------------------------------------------------------
+
 
 class AlertState:
     """
@@ -123,7 +126,7 @@ class AlertState:
     """
 
     def __init__(self, dedup_ttl: int, escalation_threshold: int):
-        self.dedup_ttl            = dedup_ttl
+        self.dedup_ttl = dedup_ttl
         self.escalation_threshold = escalation_threshold
 
         # fingerprint -> timestamp of last dispatch
@@ -143,8 +146,8 @@ class AlertState:
         escalated = True means we should promote severity to "critical".
         """
         fingerprint = _fingerprint(alert)
-        ext_id      = alert.get("extension", {}).get("id") or "unknown"
-        rule        = alert.get("rule", "?")
+        ext_id = alert.get("extension", {}).get("id") or "unknown"
+        rule = alert.get("rule", "?")
 
         with self._lock:
             now = time.time()
@@ -160,7 +163,7 @@ class AlertState:
             counts[rule] = counts.get(rule, 0) + 1
             count = counts[rule]
 
-            escalated = (count == self.escalation_threshold)
+            escalated = count == self.escalation_threshold
 
             # Record that we're about to send
             self._last_sent[fingerprint] = now
@@ -176,6 +179,7 @@ class AlertState:
 # ---------------------------------------------------------------------------
 # Alert normaliser — converts different input formats to the standard alert
 # ---------------------------------------------------------------------------
+
 
 def normalise_alert(raw: dict, source: str) -> dict | None:
     """
@@ -199,35 +203,35 @@ def _normalise_triage(triage: dict) -> dict | None:
     Convert a Stage 2 triage JSON result (from main.py --json) into a
     standard alert dict for dispatch.
     """
-    score     = triage.get("ai_risk_score") or triage.get("composite_score", 0)
-    risk_lvl  = triage.get("risk_level", "low")
-    name      = triage.get("extension_name", "Unknown")
+    score = triage.get("ai_risk_score") or triage.get("composite_score", 0)
+    risk_lvl = triage.get("risk_level", "low")
+    name = triage.get("extension_name", "Unknown")
     narrative = triage.get("analyst_narrative", "")
-    mitre     = triage.get("mitre_techniques", [])
-    iocs      = triage.get("iocs", [])
+    mitre = triage.get("mitre_techniques", [])
+    iocs = triage.get("iocs", [])
 
     if risk_lvl == "low":
-        return None   # Don't page on low-risk pre-install results
+        return None  # Don't page on low-risk pre-install results
 
     return {
-        "alert_time":  _now_iso(),
-        "rule":        "STAGE2-TRIAGE",
-        "severity":    risk_lvl,
-        "source":      "pre-install-scan",
+        "alert_time": _now_iso(),
+        "rule": "STAGE2-TRIAGE",
+        "severity": risk_lvl,
+        "source": "pre-install-scan",
         "extension": {
-            "id":    triage.get("stage_1_checks", {}).get("publisher", {}).get("extension_id"),
+            "id": triage.get("stage_1_checks", {}).get("publisher", {}).get("extension_id"),
             "title": name,
-            "url":   None,
-            "type":  "pre-install",
+            "url": None,
+            "type": "pre-install",
         },
         "detail": {
             "description": (
                 f"Pre-install AI triage: {score}/100 {risk_lvl.upper()}. "
                 f"IOCs: {'; '.join(iocs[:3])}"
             ),
-            "score":           score,
+            "score": score,
             "analyst_narrative": narrative,
-            "iocs":            iocs,
+            "iocs": iocs,
         },
         "mitre": mitre,
     }
@@ -236,6 +240,7 @@ def _normalise_triage(triage: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 # Alert enrichment — adds context fields before dispatch
 # ---------------------------------------------------------------------------
+
 
 def enrich(alert: dict, escalated: bool) -> dict:
     """
@@ -249,8 +254,8 @@ def enrich(alert: dict, escalated: bool) -> dict:
 
     # Promote severity if escalated
     if escalated:
-        enriched["severity"]    = "critical"
-        enriched["escalated"]   = True
+        enriched["severity"] = "critical"
+        enriched["escalated"] = True
         enriched["escalation_note"] = (
             "Auto-escalated: same rule has fired multiple times for this extension."
         )
@@ -258,9 +263,9 @@ def enrich(alert: dict, escalated: bool) -> dict:
     # Add a plain-English recommendation
     enriched["recommendation"] = {
         "critical": "BLOCK IMMEDIATELY - initiate Stage 5 remediation playbook",
-        "high":     "QUARANTINE extension - escalate to Tier-2 analyst",
-        "medium":   "REVIEW - monitor for additional suspicious behaviour",
-        "low":      "LOW RISK - continue standard monitoring",
+        "high": "QUARANTINE extension - escalate to Tier-2 analyst",
+        "medium": "REVIEW - monitor for additional suspicious behaviour",
+        "low": "LOW RISK - continue standard monitoring",
     }.get(enriched.get("severity", "low"), "Review and triage")
 
     return enriched
@@ -271,10 +276,10 @@ def enrich(alert: dict, escalated: bool) -> dict:
 # ---------------------------------------------------------------------------
 
 ADAPTERS = {
-    "sentinel":  sentinel.send,
-    "splunk":    splunk.send,
+    "sentinel": sentinel.send,
+    "splunk": splunk.send,
     "pagerduty": pagerduty.send,
-    "slack":     slack.send,
+    "slack": slack.send,
 }
 
 
@@ -286,7 +291,7 @@ def dispatch(alert: dict, config: dict, dry_run: bool = False) -> dict:
     If dry_run is True, prints what would be sent but does nothing.
     """
     results = {}
-    tasks   = {}
+    tasks = {}
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         for name, send_fn in ADAPTERS.items():
@@ -315,9 +320,9 @@ def dispatch(alert: dict, config: dict, dry_run: bool = False) -> dict:
 
 
 def _print_dry_run(name: str, alert: dict):
-    ext  = alert.get("extension", {}).get("title", "?")
+    ext = alert.get("extension", {}).get("title", "?")
     rule = alert.get("rule", "?")
-    sev  = alert.get("severity", "?")
+    sev = alert.get("severity", "?")
     print(f"  [DRY RUN] Would send to {name}: [{sev.upper()}] {rule} for {ext}")
 
 
@@ -325,21 +330,22 @@ def _print_dry_run(name: str, alert: dict):
 # Dispatch result logging
 # ---------------------------------------------------------------------------
 
+
 def log_dispatch_results(alert: dict, results: dict, verbose: bool = True):
     """Print a summary of which adapters succeeded or failed."""
     if not verbose:
         return
 
-    ext  = alert.get("extension", {}).get("title", "?")
+    ext = alert.get("extension", {}).get("title", "?")
     rule = alert.get("rule", "?")
-    sev  = alert.get("severity", "?").upper()
-    ts   = alert.get("alert_time", "?")[:19]
+    sev = alert.get("severity", "?").upper()
+    ts = alert.get("alert_time", "?")[:19]
 
     colour = {
         "CRITICAL": "\033[91m\033[1m",
-        "HIGH":     "\033[91m",
-        "MEDIUM":   "\033[93m",
-        "LOW":      "\033[92m",
+        "HIGH": "\033[91m",
+        "MEDIUM": "\033[93m",
+        "LOW": "\033[92m",
     }.get(sev, "")
     reset = "\033[0m"
 
@@ -362,6 +368,7 @@ def log_dispatch_results(alert: dict, results: dict, verbose: bool = True):
 # Main pipeline loop
 # ---------------------------------------------------------------------------
 
+
 def run_pipeline(source: str, config: dict, dry_run: bool, verbose: bool):
     """
     Read JSON from stdin, normalise, deduplicate, enrich, and dispatch.
@@ -374,8 +381,8 @@ def run_pipeline(source: str, config: dict, dry_run: bool, verbose: bool):
     """
     dispatch_cfg = config.get("dispatch", {})
     state = AlertState(
-        dedup_ttl            = dispatch_cfg.get("dedup_ttl_seconds",    300),
-        escalation_threshold = dispatch_cfg.get("escalation_threshold", 3),
+        dedup_ttl=dispatch_cfg.get("dedup_ttl_seconds", 300),
+        escalation_threshold=dispatch_cfg.get("escalation_threshold", 3),
     )
     min_severity = dispatch_cfg.get("min_severity", "low")
 
@@ -387,17 +394,13 @@ def run_pipeline(source: str, config: dict, dry_run: bool, verbose: bool):
         print(f"[Dispatcher] Source: {source} | Dry-run: {dry_run}\n")
 
     # Build an iterator of raw dicts depending on source type
-    raw_items = (
-        _read_triage_stdin(verbose)
-        if source == "triage"
-        else _read_monitor_stdin(verbose)
-    )
+    raw_items = _read_triage_stdin(verbose) if source == "triage" else _read_monitor_stdin(verbose)
 
     for raw in raw_items:
         # Normalise to standard alert format
         alert = normalise_alert(raw, source)
         if alert is None:
-            continue   # e.g. low-score triage result — skip silently
+            continue  # e.g. low-score triage result — skip silently
 
         # Apply global minimum severity filter
         if not _severity_meets_minimum(alert.get("severity", "low"), min_severity):
@@ -499,21 +502,21 @@ def _read_monitor_stdin(verbose: bool):
 
 SAMPLE_ALERT = {
     "alert_time": "2026-05-21T10:30:00+00:00",
-    "rule":       "RULE-01",
-    "severity":   "critical",
+    "rule": "RULE-01",
+    "severity": "critical",
     "extension": {
-        "id":    "abcdefghijklmnopqrstuvwxyzabcdef",
+        "id": "abcdefghijklmnopqrstuvwxyzabcdef",
         "title": "Nx Console (SIMULATED MALICIOUS)",
-        "url":   "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/background.js",
-        "type":  "service_worker",
+        "url": "chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/background.js",
+        "type": "service_worker",
     },
     "detail": {
         "description": "Periodic POST to known exfil domain - C2 beacon pattern",
-        "url":         "https://malicious-tenant.workers.dev/collect",
-        "host":        "malicious-tenant.workers.dev",
+        "url": "https://malicious-tenant.workers.dev/collect",
+        "host": "malicious-tenant.workers.dev",
         "interval_sec": 61.2,
-        "post_count":  4,
-        "mitre_note":  "Matches TeamPCP 60-second beacon to *.workers.dev",
+        "post_count": 4,
+        "mitre_note": "Matches TeamPCP 60-second beacon to *.workers.dev",
     },
     "mitre": ["T1071.001", "T1176"],
 }
@@ -522,6 +525,7 @@ SAMPLE_ALERT = {
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -563,13 +567,16 @@ def main():
     )
     args = parser.parse_args()
 
-    config  = load_config(args.config)
+    config = load_config(args.config)
     verbose = not args.quiet
 
     if verbose:
         print("\n\033[1m=== ExtensionGuard Stage 4 - Alert Dispatcher ===\033[0m")
-        enabled = [k for k in ("sentinel", "splunk", "pagerduty", "slack")
-                   if config.get(k, {}).get("enabled")]
+        enabled = [
+            k
+            for k in ("sentinel", "splunk", "pagerduty", "slack")
+            if config.get(k, {}).get("enabled")
+        ]
         if enabled:
             print(f"Active adapters: {', '.join(enabled)}")
         else:
@@ -589,10 +596,10 @@ def main():
     # --- Normal pipeline mode: read from stdin ----------------------------
     try:
         run_pipeline(
-            source   = args.source,
-            config   = config,
-            dry_run  = args.dry_run,
-            verbose  = verbose,
+            source=args.source,
+            config=config,
+            dry_run=args.dry_run,
+            verbose=verbose,
         )
     except KeyboardInterrupt:
         if verbose:
@@ -613,7 +620,7 @@ def _now_iso() -> str:
 
 def _fingerprint(alert: dict) -> str:
     """Compute a deduplication fingerprint from rule + extension_id."""
-    rule   = alert.get("rule", "?")
+    rule = alert.get("rule", "?")
     ext_id = alert.get("extension", {}).get("id") or alert.get("extension", {}).get("title") or "?"
     return f"{rule}:{ext_id}"
 

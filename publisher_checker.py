@@ -22,6 +22,7 @@ import re
 
 try:
     import requests
+
     _REQUESTS_AVAILABLE = True
 except ImportError:
     _REQUESTS_AVAILABLE = False
@@ -57,6 +58,7 @@ SUSPICIOUS_UPDATE_URL_PATTERNS = [
 # Public dataclass-free result (simple dict keeps it CS50P-friendly)
 # ---------------------------------------------------------------------------
 
+
 def check_publisher(
     manifest: ManifestInfo,
     crx_header_bytes: bytes | None = None,
@@ -81,16 +83,16 @@ def check_publisher(
       pub_score          int    (0–30 publisher-specific risk contribution)
       flags              list[str]
     """
-    flags  = []
-    score  = 0
+    flags = []
+    score = 0
     result = {
-        "extension_id":      None,
-        "update_url_ok":     True,
+        "extension_id": None,
+        "update_url_ok": True,
         "suspicious_update": False,
-        "cws_version":       None,
-        "cws_exists":        None,
-        "pub_score":         0,
-        "flags":             flags,
+        "cws_version": None,
+        "cws_exists": None,
+        "pub_score": 0,
+        "flags": flags,
     }
 
     # --- 1. Extract public key and compute extension ID --------------------
@@ -128,8 +130,7 @@ def check_publisher(
         # extensions that claim to be from the Web Store
         if manifest.raw.get("key"):
             flags.append(
-                "Has 'key' field but no update_url - "
-                "may be sideloaded copy of a CWS extension"
+                "Has 'key' field but no update_url - may be sideloaded copy of a CWS extension"
             )
 
     # --- 3. Live CWS version check (optional) ------------------------------
@@ -137,13 +138,12 @@ def check_publisher(
     if query_cws and ext_id and _REQUESTS_AVAILABLE:
         cws_info = _query_cws(ext_id)
         result["cws_version"] = cws_info.get("version")
-        result["cws_exists"]  = cws_info.get("exists", False)
+        result["cws_exists"] = cws_info.get("exists", False)
 
         if not cws_info.get("exists"):
             score += 10
             flags.append(
-                f"Extension ID {ext_id} not found on Chrome Web Store - "
-                "sideloaded or unpublished"
+                f"Extension ID {ext_id} not found on Chrome Web Store - sideloaded or unpublished"
             )
         elif cws_info.get("version") and manifest.version != cws_info["version"]:
             score += 20
@@ -152,13 +152,14 @@ def check_publisher(
                 f"CWS says {cws_info['version']} - possible tampered update"
             )
 
-    result["pub_score"] = min(score, 30)   # cap contribution at 30
+    result["pub_score"] = min(score, 30)  # cap contribution at 30
     return result
 
 
 # ---------------------------------------------------------------------------
 # Key extraction helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_public_key(manifest: ManifestInfo, crx_header_bytes: bytes | None) -> bytes | None:
     """
@@ -197,12 +198,9 @@ def _compute_extension_id(public_key_bytes: bytes) -> str:
     """
     key_hash = hashlib.sha256(public_key_bytes).digest()[:16]
     # hex() gives us a 32-char hex string (16 bytes * 2 hex digits each)
-    hex_str  = key_hash.hex()
+    hex_str = key_hash.hex()
     # Remap: each hex digit (0-9, a-f) → letter a-p
-    ext_id = "".join(
-        chr(ord('a') + int(c, 16))
-        for c in hex_str
-    )
+    ext_id = "".join(chr(ord("a") + int(c, 16)) for c in hex_str)
     return ext_id
 
 
@@ -226,7 +224,7 @@ def _extract_key_from_crx3_header(header_bytes: bytes) -> bytes | None:
         # Field 1 = public_key inside AsymmetricKeyProof
         keys = inner.get(1, [])
         if keys:
-            return keys[0]   # Return the first (primary) signing key
+            return keys[0]  # Return the first (primary) signing key
 
     # Fallback: try ecdsa proofs (field 3)
     ec_proofs = fields.get(3, [])
@@ -243,13 +241,14 @@ def _extract_key_from_crx3_header(header_bytes: bytes) -> bytes | None:
 # Minimal protobuf parser - handles only the wire types we need
 # ---------------------------------------------------------------------------
 
+
 def _decode_varint(data: bytes, pos: int) -> tuple:
     """
     Decode a protobuf base-128 varint starting at pos.
     Returns (value, new_pos).
     """
     result = 0
-    shift  = 0
+    shift = 0
     while pos < len(data):
         byte = data[pos]
         pos += 1
@@ -277,16 +276,16 @@ def _parse_length_delimited_fields(data: bytes) -> dict:
         field_num = tag >> 3
         wire_type = tag & 0x7
 
-        if wire_type == 0:       # varint - consume and discard
+        if wire_type == 0:  # varint - consume and discard
             _, pos = _decode_varint(data, pos)
-        elif wire_type == 1:     # 64-bit fixed - skip
+        elif wire_type == 1:  # 64-bit fixed - skip
             pos += 8
-        elif wire_type == 2:     # length-delimited - extract
+        elif wire_type == 2:  # length-delimited - extract
             length, pos = _decode_varint(data, pos)
             value = data[pos : pos + length]
             pos += length
             fields.setdefault(field_num, []).append(value)
-        elif wire_type == 5:     # 32-bit fixed - skip
+        elif wire_type == 5:  # 32-bit fixed - skip
             pos += 4
         else:
             break  # Unknown wire type - bail
@@ -297,6 +296,7 @@ def _parse_length_delimited_fields(data: bytes) -> dict:
 # ---------------------------------------------------------------------------
 # CWS update endpoint query
 # ---------------------------------------------------------------------------
+
 
 def _query_cws(ext_id: str, timeout: int = 5) -> dict:
     """
@@ -312,7 +312,7 @@ def _query_cws(ext_id: str, timeout: int = 5) -> dict:
 
         # Response is XML; a minimal check is sufficient
         text = resp.text
-        if "status='noupdate'" in text or "status=\"noupdate\"" in text:
+        if "status='noupdate'" in text or 'status="noupdate"' in text:
             # Extension exists but is up-to-date (no update available)
             return {"exists": True, "version": None}
 

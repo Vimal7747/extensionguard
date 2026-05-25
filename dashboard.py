@@ -64,9 +64,7 @@ log = get_logger(__name__)
 # wide enough to accept either short_id variant.
 #
 # This pattern is the primary path-traversal defence.
-CASE_ID_PATTERN = re.compile(
-    r"^\d{8}-\d{6}-[0-9a-p]{8}(?:-\d+|-overflow-[A-Za-z0-9_-]+)?$"
-)
+CASE_ID_PATTERN = re.compile(r"^\d{8}-\d{6}-[0-9a-p]{8}(?:-\d+|-overflow-[A-Za-z0-9_-]+)?$")
 
 
 def create_app(
@@ -87,13 +85,11 @@ def create_app(
         static_folder="dashboard_static",
     )
     app.config["QUARANTINE_ROOT"] = (
-        Path(quarantine_root) if quarantine_root
-        else Path(__file__).parent / "quarantine"
+        Path(quarantine_root) if quarantine_root else Path(__file__).parent / "quarantine"
     )
     app.config["ALERTS_LOG"] = Path(alerts_log) if alerts_log else None
     app.config["QUEUE_FILE"] = (
-        Path(queue_file) if queue_file
-        else Path(__file__).parent / "remediation_queue.jsonl"
+        Path(queue_file) if queue_file else Path(__file__).parent / "remediation_queue.jsonl"
     )
     # Webhook config: {owner, repo, branch, path, secret}. Without a `secret`
     # the webhook route is registered but rejects all requests, which is the
@@ -209,13 +205,15 @@ def create_app(
     @app.route("/api/health")
     def api_health():
         """Simple readiness check - useful for monitoring."""
-        return jsonify({
-            "status": "ok",
-            "quarantine_root": str(app.config["QUARANTINE_ROOT"]),
-            "cases":           len(_list_cases(app.config["QUARANTINE_ROOT"])),
-            "ttp_library":     library_stats(),
-            "now":             datetime.now(timezone.utc).isoformat(),
-        })
+        return jsonify(
+            {
+                "status": "ok",
+                "quarantine_root": str(app.config["QUARANTINE_ROOT"]),
+                "cases": len(_list_cases(app.config["QUARANTINE_ROOT"])),
+                "ttp_library": library_stats(),
+                "now": datetime.now(timezone.utc).isoformat(),
+            }
+        )
 
     # ----- GitHub webhook for TTP library sync -----------------------------
 
@@ -236,7 +234,7 @@ def create_app(
             return jsonify({"error": "webhook not configured"}), 503
 
         signature = request.headers.get("X-Hub-Signature-256", "")
-        payload   = request.get_data()   # raw bytes - HMAC needs the unmodified body
+        payload = request.get_data()  # raw bytes - HMAC needs the unmodified body
 
         if not verify_github_signature(payload, signature, cfg["secret"]):
             log.warning("Webhook signature verification FAILED")
@@ -265,11 +263,14 @@ def create_app(
         # so the GitHub Webhooks UI shows a useful failure message.
         log.info(
             "Webhook authenticated, syncing TTP from %s/%s",
-            cfg.get("owner"), cfg.get("repo"),
+            cfg.get("owner"),
+            cfg.get("repo"),
         )
         result = sync_from_github(
-            owner=cfg["owner"], repo=cfg["repo"],
-            path=cfg.get("path", ""), branch=target_branch,
+            owner=cfg["owner"],
+            repo=cfg["repo"],
+            path=cfg.get("path", ""),
+            branch=target_branch,
             github_token=cfg.get("token"),
             delete_orphans=cfg.get("delete_orphans", False),
         )
@@ -281,13 +282,11 @@ def create_app(
 
     @app.errorhandler(404)
     def not_found(_exc):
-        return render_template("error.html",
-                               code=404, message="Not found"), 404
+        return render_template("error.html", code=404, message="Not found"), 404
 
     @app.errorhandler(400)
     def bad_request(exc):
-        return render_template("error.html",
-                               code=400, message=str(exc)), 400
+        return render_template("error.html", code=400, message=str(exc)), 400
 
     return app
 
@@ -295,6 +294,7 @@ def create_app(
 # ---------------------------------------------------------------------------
 # Internal helpers - kept at module level for testability
 # ---------------------------------------------------------------------------
+
 
 def _list_cases(quarantine_root: Path) -> list:
     """
@@ -309,21 +309,23 @@ def _list_cases(quarantine_root: Path) -> list:
         if not entry.is_dir():
             continue
         if not CASE_ID_PATTERN.match(entry.name):
-            continue   # Skip anything that doesn't look like a case folder
+            continue  # Skip anything that doesn't look like a case folder
 
         coc = _load_optional_json(entry / "chain_of_custody.json") or {}
         ext_block = coc.get("extension", {})
         custody = coc.get("custody_log", [])
 
-        cases.append({
-            "case_id":        entry.name,
-            "preserved_at":   coc.get("preserved_at"),
-            "operator":       coc.get("operator"),
-            "extension_id":   ext_block.get("id"),
-            "extension_name": ext_block.get("name"),
-            "n_actions":      len(custody),
-            "last_action":    custody[-1]["action"] if custody else None,
-        })
+        cases.append(
+            {
+                "case_id": entry.name,
+                "preserved_at": coc.get("preserved_at"),
+                "operator": coc.get("operator"),
+                "extension_id": ext_block.get("id"),
+                "extension_name": ext_block.get("name"),
+                "n_actions": len(custody),
+                "last_action": custody[-1]["action"] if custody else None,
+            }
+        )
 
     cases.sort(key=lambda c: c["case_id"], reverse=True)
     return cases
@@ -350,7 +352,7 @@ def _tail_alerts(log_path: Path | None, limit: int = 20) -> list:
         except json.JSONDecodeError:
             # Skip non-JSON lines (e.g. interleaved human-readable output)
             continue
-    return list(reversed(alerts))   # newest first
+    return list(reversed(alerts))  # newest first
 
 
 def _resolve_case(quarantine_root: Path, case_id: str) -> Path:
@@ -416,19 +418,21 @@ def _enqueue_remediation(
     invokes registry writes or other privileged operations.
     """
     entry = {
-        "queued_at":  datetime.now(timezone.utc).isoformat(),
-        "case_id":    case_id,
-        "decision":   decision,
-        "action":     action,
-        "notes":      notes,
-        "actor":      _get_actor(),
+        "queued_at": datetime.now(timezone.utc).isoformat(),
+        "case_id": case_id,
+        "decision": decision,
+        "action": action,
+        "notes": notes,
+        "actor": _get_actor(),
     }
     queue_file.parent.mkdir(parents=True, exist_ok=True)
     with queue_file.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     log.info(
         "Queued remediation: case=%s decision=%s action=%s",
-        case_id, decision, action,
+        case_id,
+        decision,
+        action,
     )
 
 
@@ -465,7 +469,7 @@ def _get_csrf_token() -> str:
 def _check_csrf():
     """Verify the submitted form's _csrf field matches the session token."""
     submitted = request.form.get("_csrf", "")
-    expected  = session.get("_csrf", "")
+    expected = session.get("_csrf", "")
     if not submitted or not expected or not secrets.compare_digest(submitted, expected):
         abort(400, "CSRF token mismatch")
 
@@ -473,6 +477,7 @@ def _check_csrf():
 # ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -486,27 +491,34 @@ def main():
         ),
     )
     parser.add_argument(
-        "--host", default="127.0.0.1",
+        "--host",
+        default="127.0.0.1",
         help="Bind address (default: 127.0.0.1 - localhost only)",
     )
     parser.add_argument(
-        "--port", type=int, default=5000,
+        "--port",
+        type=int,
+        default=5000,
         help="Port to listen on (default: 5000)",
     )
     parser.add_argument(
-        "--quarantine", default=None,
+        "--quarantine",
+        default=None,
         help="Path to the quarantine directory (default: ./quarantine)",
     )
     parser.add_argument(
-        "--alerts-log", default=None,
+        "--alerts-log",
+        default=None,
         help="Path to a JSONL alert log to tail in the UI (optional)",
     )
     parser.add_argument(
-        "--queue-file", default=None,
+        "--queue-file",
+        default=None,
         help="Path to the remediation queue file (default: ./remediation_queue.jsonl)",
     )
     parser.add_argument(
-        "--debug", action="store_true",
+        "--debug",
+        action="store_true",
         help="Enable Flask debug mode (auto-reload, debug pages). LOCAL USE ONLY.",
     )
     args = parser.parse_args()
@@ -535,7 +547,9 @@ def main():
         print(f"  Alerts log:      {app.config['ALERTS_LOG']}")
     print(f"  Queue file:      {app.config['QUEUE_FILE']}")
     if webhook_cfg and webhook_cfg.get("secret"):
-        print(f"  Webhook:         enabled, repo={webhook_cfg.get('owner')}/{webhook_cfg.get('repo')}")
+        print(
+            f"  Webhook:         enabled, repo={webhook_cfg.get('owner')}/{webhook_cfg.get('repo')}"
+        )
     else:
         print("  Webhook:         disabled (no secret in extguard.conf.json)")
 

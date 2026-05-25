@@ -1,6 +1,7 @@
 # tests/test_smoke.py - One-line sanity tests for the test infrastructure itself.
 # If this file passes, the conftest.py is wired correctly and imports resolve.
 
+
 def test_imports_work():
     """All public modules must import cleanly with no missing deps."""
     import crx_parser  # noqa: F401

@@ -28,33 +28,33 @@ log = get_logger(__name__)
 
 
 # Default retry policy - tunable per call
-DEFAULT_MAX_ATTEMPTS  = 3
-DEFAULT_BASE_DELAY    = 1.0    # seconds
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_BASE_DELAY = 1.0  # seconds
 DEFAULT_BACKOFF_FACTOR = 2.0
-DEFAULT_JITTER_FRAC   = 0.25   # +/- 25% randomness so retries don't sync up
+DEFAULT_JITTER_FRAC = 0.25  # +/- 25% randomness so retries don't sync up
 
 
 # HTTP status codes that warrant a retry (transient server-side issues)
 RETRIABLE_STATUS = {
-    429,   # Too Many Requests (some servers respect Retry-After, we ignore for simplicity)
-    500,   # Internal Server Error
-    502,   # Bad Gateway
-    503,   # Service Unavailable
-    504,   # Gateway Timeout
+    429,  # Too Many Requests (some servers respect Retry-After, we ignore for simplicity)
+    500,  # Internal Server Error
+    502,  # Bad Gateway
+    503,  # Service Unavailable
+    504,  # Gateway Timeout
 }
 
 
 def post_with_retry(
-    url:         str,
+    url: str,
     *,
-    json:        dict | None = None,
-    data:        bytes | None = None,
-    headers:     dict | None = None,
-    timeout:     float = 10.0,
-    verify:      bool = True,
+    json: dict | None = None,
+    data: bytes | None = None,
+    headers: dict | None = None,
+    timeout: float = 10.0,
+    verify: bool = True,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-    base_delay:   float = DEFAULT_BASE_DELAY,
-    sleep_fn = time.sleep,
+    base_delay: float = DEFAULT_BASE_DELAY,
+    sleep_fn=time.sleep,
 ) -> tuple:
     """
     POST with exponential backoff retries on transient failures.
@@ -73,11 +73,11 @@ def post_with_retry(
         try:
             resp = requests.post(
                 url,
-                json    = json,
-                data    = data,
-                headers = headers,
-                timeout = timeout,
-                verify  = verify,
+                json=json,
+                data=data,
+                headers=headers,
+                timeout=timeout,
+                verify=verify,
             )
         except requests.exceptions.Timeout:
             last_error = f"timeout after {timeout}s on attempt {attempt}"
@@ -95,9 +95,7 @@ def post_with_retry(
 
         # We got a response - decide whether it's retriable
         if resp.status_code in RETRIABLE_STATUS:
-            last_error = (
-                f"HTTP {resp.status_code} on attempt {attempt} - retriable"
-            )
+            last_error = f"HTTP {resp.status_code} on attempt {attempt} - retriable"
             log.debug(last_error)
             _maybe_sleep(attempt, max_attempts, base_delay, sleep_fn)
             continue

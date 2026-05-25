@@ -48,8 +48,8 @@ SIGMA_NAMESPACE = uuid.UUID("d8e6f3a1-7c4f-4b9e-9abc-7e6d5c4b3a21")
 
 RULES = [
     {
-        "rule_key":    "RULE-01",
-        "title":       "Browser Extension C2 Beacon to Workers/Pages Edge",
+        "rule_key": "RULE-01",
+        "title": "Browser Extension C2 Beacon to Workers/Pages Edge",
         "description": (
             "Detects browser-extension-initiated POST requests to "
             "Cloudflare Workers / Pages / ngrok / netlify domains, the "
@@ -65,10 +65,14 @@ RULES = [
             "selection": {
                 "cs-method": "POST",
                 "c-uri-host|endswith": [
-                    ".workers.dev", ".pages.dev", ".netlify.app",
-                    ".vercel.app", ".trycloudflare.com", ".ngrok.io",
+                    ".workers.dev",
+                    ".pages.dev",
+                    ".netlify.app",
+                    ".vercel.app",
+                    ".trycloudflare.com",
+                    ".ngrok.io",
                 ],
-                "c-uri-extension": "",   # No file extension - API call shape
+                "c-uri-extension": "",  # No file extension - API call shape
             },
             "condition": "selection",
         },
@@ -78,10 +82,9 @@ RULES = [
         ],
         "level": "high",
     },
-
     {
-        "rule_key":    "RULE-02",
-        "title":       "Session Cookie POSTed to High-Value Auth Domain",
+        "rule_key": "RULE-02",
+        "title": "Session Cookie POSTed to High-Value Auth Domain",
         "description": (
             "Detects POST requests carrying a long session-token cookie to "
             "github.com, npmjs.com, *.atlassian.net, slack.com, or "
@@ -97,10 +100,13 @@ RULES = [
             "selection": {
                 "cs-method": "POST",
                 "c-uri-host|contains": [
-                    "github.com", "npmjs.com", "atlassian.net",
-                    "slack.com", "aws.amazon.com",
+                    "github.com",
+                    "npmjs.com",
+                    "atlassian.net",
+                    "slack.com",
+                    "aws.amazon.com",
                 ],
-                "cs(Cookie)|re": ".{40,}",   # 40+ chars of cookie data
+                "cs(Cookie)|re": ".{40,}",  # 40+ chars of cookie data
             },
             "condition": "selection",
         },
@@ -110,10 +116,9 @@ RULES = [
         ],
         "level": "high",
     },
-
     {
-        "rule_key":    "RULE-03",
-        "title":       "Browser Extension API Call to High-Value Domain",
+        "rule_key": "RULE-03",
+        "title": "Browser Extension API Call to High-Value Domain",
         "description": (
             "Detects GET-with-JSON-Accept or POST requests from a browser "
             "extension context to GitHub/npm/AWS/Slack/Atlassian/Google APIs. "
@@ -128,17 +133,25 @@ RULES = [
         "detection": {
             "selection_api": {
                 "c-uri-host|contains": [
-                    "github.com", "npmjs.com", "gitlab.com",
-                    "atlassian.net", "slack.com", "aws.amazon.com",
-                    "accounts.google.com", "login.microsoftonline.com",
+                    "github.com",
+                    "npmjs.com",
+                    "gitlab.com",
+                    "atlassian.net",
+                    "slack.com",
+                    "aws.amazon.com",
+                    "accounts.google.com",
+                    "login.microsoftonline.com",
                 ],
                 "cs(Accept)|contains": "json",
             },
             "selection_post": {
                 "cs-method": "POST",
                 "c-uri-host|contains": [
-                    "github.com", "npmjs.com", "atlassian.net",
-                    "slack.com", "aws.amazon.com",
+                    "github.com",
+                    "npmjs.com",
+                    "atlassian.net",
+                    "slack.com",
+                    "aws.amazon.com",
                 ],
             },
             "condition": "selection_api or selection_post",
@@ -149,10 +162,9 @@ RULES = [
         ],
         "level": "medium",
     },
-
     {
-        "rule_key":    "RULE-04",
-        "title":       "Large Base64 Blob Staged to Browser Storage",
+        "rule_key": "RULE-04",
+        "title": "Large Base64 Blob Staged to Browser Storage",
         "description": (
             "Detects browser localStorage / IndexedDB writes containing a "
             "100+ char base64 payload, the TeamPCP credential-staging pattern "
@@ -177,10 +189,9 @@ RULES = [
         ],
         "level": "medium",
     },
-
     {
-        "rule_key":    "RULE-05",
-        "title":       "Browser Extension Disabling Other Extensions",
+        "rule_key": "RULE-05",
+        "title": "Browser Extension Disabling Other Extensions",
         "description": (
             "Detects use of chrome.management.setEnabled() to disable another "
             "extension - common lateral-movement technique to silence "
@@ -204,10 +215,9 @@ RULES = [
         ],
         "level": "high",
     },
-
     {
-        "rule_key":    "RULE-06",
-        "title":       "Obfuscated eval() Chain in Browser Extension",
+        "rule_key": "RULE-06",
+        "title": "Obfuscated eval() Chain in Browser Extension",
         "description": (
             "Detects eval(atob(...)), eval(String.fromCharCode(...)), or "
             "eval(unescape(...)) patterns in extension JS console output. "
@@ -236,6 +246,7 @@ RULES = [
 # ---------------------------------------------------------------------------
 # YAML emission
 # ---------------------------------------------------------------------------
+
 
 def _rule_uuid(rule_key: str) -> str:
     """Stable UUIDv5 so repeated runs produce the same id field."""
@@ -307,6 +318,7 @@ def _yaml_value(value) -> str:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def generate_all_rules() -> dict:
     """Return a dict mapping rule_key -> Sigma YAML string."""
@@ -418,6 +430,7 @@ won't break upstream tracking.
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate Sigma detection rules from ExtensionGuard's behavioral_monitor rules",
@@ -429,11 +442,13 @@ def main():
         ),
     )
     parser.add_argument(
-        "--output", default="sigma/",
+        "--output",
+        default="sigma/",
         help="Directory to write .yml files into, or '-' for stdout (default: ./sigma/)",
     )
     parser.add_argument(
-        "--rule", default=None,
+        "--rule",
+        default=None,
         help="Emit only one specific rule (e.g. RULE-01). Default: all rules.",
     )
     args = parser.parse_args()

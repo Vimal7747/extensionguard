@@ -17,6 +17,7 @@ from remediators import forensics
 # Shared test scaffolding
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def quarantine_dir(tmp_path):
     """An empty quarantine directory the dashboard can list."""
@@ -60,11 +61,11 @@ def real_case(quarantine_dir, benign_manifest_raw):
         crx_bytes=b"fake-crx-bytes",
         manifest=benign_manifest_raw,
         triage_result={
-            "extension_name":  "Test Extension",
-            "risk_level":      "high",
-            "ai_risk_score":   75,
+            "extension_name": "Test Extension",
+            "risk_level": "high",
+            "ai_risk_score": 75,
             "composite_score": 75,
-            "iocs":             ["test IOC"],
+            "iocs": ["test IOC"],
             "mitre_techniques": ["T1176"],
             "analyst_narrative": "Test narrative",
         },
@@ -77,36 +78,43 @@ def real_case(quarantine_dir, benign_manifest_raw):
 # Path-traversal defence (the security-critical bit)
 # ---------------------------------------------------------------------------
 
+
 class TestCaseIdValidation:
     """CASE_ID_PATTERN must reject anything that could escape the quarantine dir."""
 
-    @pytest.mark.parametrize("good", [
-        # Hex short IDs (from CRX hash or name hash)
-        "20260522-164620-abcdef01",
-        "20260101-000000-12345678",
-        "20260101-000000-deadbeef",
-        "20260101-000000-12345678-2",       # collision suffix
-        "20260101-000000-12345678-overflow-aBcDeF12",
-        # Chrome a-p alphabet IDs (when short_id comes from extension_id)
-        "20260101-000000-abcdefgh",
-        "20260101-000000-ponmlkji",
-    ])
+    @pytest.mark.parametrize(
+        "good",
+        [
+            # Hex short IDs (from CRX hash or name hash)
+            "20260522-164620-abcdef01",
+            "20260101-000000-12345678",
+            "20260101-000000-deadbeef",
+            "20260101-000000-12345678-2",  # collision suffix
+            "20260101-000000-12345678-overflow-aBcDeF12",
+            # Chrome a-p alphabet IDs (when short_id comes from extension_id)
+            "20260101-000000-abcdefgh",
+            "20260101-000000-ponmlkji",
+        ],
+    )
     def test_valid_case_ids_accepted(self, good):
         assert CASE_ID_PATTERN.match(good)
 
-    @pytest.mark.parametrize("bad", [
-        "..",
-        ".",
-        "20260101",
-        "20260101-000000-XYZ",            # uppercase rejected
-        "20260101-000000-zzzzzzzz",       # 'z' is outside both hex and a-p
-        "20260101-000000-abcdefgq",       # 'q' is outside a-p range
-        "20260101-000000-abcdefg",        # only 7 chars
-        "20260101-000000-deadbeef; rm -rf /",
-        "20260101-000000-deadbeef$(id)",  # command injection attempt
-        "..deadbeef",                      # leading dots
-        "",
-    ])
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "..",
+            ".",
+            "20260101",
+            "20260101-000000-XYZ",  # uppercase rejected
+            "20260101-000000-zzzzzzzz",  # 'z' is outside both hex and a-p
+            "20260101-000000-abcdefgq",  # 'q' is outside a-p range
+            "20260101-000000-abcdefg",  # only 7 chars
+            "20260101-000000-deadbeef; rm -rf /",
+            "20260101-000000-deadbeef$(id)",  # command injection attempt
+            "..deadbeef",  # leading dots
+            "",
+        ],
+    )
     def test_invalid_case_ids_rejected(self, bad):
         assert not CASE_ID_PATTERN.match(bad)
 
@@ -139,6 +147,7 @@ class TestCaseIdValidation:
 # Read-only views
 # ---------------------------------------------------------------------------
 
+
 class TestIndex:
     def test_empty_dashboard_renders(self, client):
         resp = client.get("/")
@@ -153,10 +162,16 @@ class TestIndex:
 
     def test_alerts_show_up(self, client, alerts_log):
         alerts_log.write_text(
-            json.dumps({"rule": "RULE-01", "severity": "critical",
-                        "alert_time": "2026-05-22T10:00:00Z",
-                        "extension": {"title": "Suspect"},
-                        "detail": {"description": "C2 beacon"}}) + "\n"
+            json.dumps(
+                {
+                    "rule": "RULE-01",
+                    "severity": "critical",
+                    "alert_time": "2026-05-22T10:00:00Z",
+                    "extension": {"title": "Suspect"},
+                    "detail": {"description": "C2 beacon"},
+                }
+            )
+            + "\n"
         )
         resp = client.get("/")
         assert b"RULE-01" in resp.data
@@ -186,6 +201,7 @@ class TestCaseDetail:
 # JSON APIs
 # ---------------------------------------------------------------------------
 
+
 class TestApis:
     def test_health(self, client):
         resp = client.get("/api/health")
@@ -203,8 +219,7 @@ class TestApis:
 
     def test_alerts_api_returns_jsonl(self, client, alerts_log):
         alerts_log.write_text(
-            "\n".join(json.dumps({"rule": f"R-{i}", "severity": "high"})
-                      for i in range(5))
+            "\n".join(json.dumps({"rule": f"R-{i}", "severity": "high"}) for i in range(5))
         )
         resp = client.get("/api/alerts?limit=3")
         data = resp.get_json()
@@ -213,11 +228,7 @@ class TestApis:
         assert data[0]["rule"] == "R-4"
 
     def test_alerts_api_handles_malformed_lines(self, client, alerts_log):
-        alerts_log.write_text(
-            'not json\n'
-            '{"rule": "R-1", "severity": "high"}\n'
-            'also not json\n'
-        )
+        alerts_log.write_text('not json\n{"rule": "R-1", "severity": "high"}\nalso not json\n')
         resp = client.get("/api/alerts")
         # Only the JSON line survives
         data = resp.get_json()
@@ -228,6 +239,7 @@ class TestApis:
 # ---------------------------------------------------------------------------
 # State-changing routes - CSRF and queueing
 # ---------------------------------------------------------------------------
+
 
 class TestCsrf:
     """CSRF token enforcement on POST routes."""
@@ -270,7 +282,7 @@ class TestRemediationQueue:
             f"/case/{real_case.name}/approve",
             data={"_csrf": csrf, "action": "kill", "notes": "confirmed beacon"},
         )
-        assert resp.status_code == 302   # redirect back to case page
+        assert resp.status_code == 302  # redirect back to case page
 
         assert queue_file.exists()
         entries = [json.loads(line) for line in queue_file.read_text().splitlines() if line.strip()]
@@ -317,6 +329,7 @@ class TestRemediationQueue:
 # ---------------------------------------------------------------------------
 # Verify integration
 # ---------------------------------------------------------------------------
+
 
 class TestVerifyIntegration:
     def test_clean_case_verifies_ok(self, client, real_case):

@@ -20,13 +20,16 @@ from ttp_ingestor import (
 # HMAC signature verification - the security-critical bit
 # ---------------------------------------------------------------------------
 
+
 class TestSignatureVerification:
     SECRET = "shhh-its-a-secret"
 
     def _sign(self, body: bytes) -> str:
         """Mimic exactly what GitHub does to build X-Hub-Signature-256."""
         digest = hmac.new(
-            self.SECRET.encode("utf-8"), body, hashlib.sha256,
+            self.SECRET.encode("utf-8"),
+            body,
+            hashlib.sha256,
         ).hexdigest()
         return f"sha256={digest}"
 
@@ -48,7 +51,7 @@ class TestSignatureVerification:
         assert verify_github_signature(b'{"event": "PUSH"}', sig, self.SECRET) is False
 
     def test_missing_sha256_prefix_rejected(self):
-        body = b'x'
+        body = b"x"
         # Raw hex with no "sha256=" prefix - must reject
         digest = hmac.new(self.SECRET.encode(), body, hashlib.sha256).hexdigest()
         assert verify_github_signature(body, digest, self.SECRET) is False
@@ -75,6 +78,7 @@ class TestSignatureVerification:
 # Git blob SHA reproduction (for change detection)
 # ---------------------------------------------------------------------------
 
+
 class TestGitBlobSha:
     def test_known_vector(self):
         """Git's blob SHA for empty content is e69de29..."""
@@ -91,6 +95,7 @@ class TestGitBlobSha:
 # sync_from_github happy path
 # ---------------------------------------------------------------------------
 
+
 class TestSyncSuccess:
     def test_writes_remote_files_to_target(self, tmp_path):
         """A flat directory listing with two .md files should download both."""
@@ -98,19 +103,25 @@ class TestSyncSuccess:
         # First call: the directory listing
         listing = [
             {
-                "type": "file", "name": "a.md", "path": "a.md",
+                "type": "file",
+                "name": "a.md",
+                "path": "a.md",
                 "sha": _git_blob_sha1(b"alpha content"),
                 "download_url": "https://example.com/a",
             },
             {
-                "type": "file", "name": "b.md", "path": "b.md",
+                "type": "file",
+                "name": "b.md",
+                "path": "b.md",
                 "sha": _git_blob_sha1(b"bravo content"),
                 "download_url": "https://example.com/b",
             },
             # README should be skipped because it's not .md... wait it IS .md
             # Use a non-md file for the negative case
             {
-                "type": "file", "name": "ignored.txt", "path": "ignored.txt",
+                "type": "file",
+                "name": "ignored.txt",
+                "path": "ignored.txt",
                 "download_url": "https://example.com/ignored",
             },
         ]
@@ -131,7 +142,9 @@ class TestSyncSuccess:
 
         with patch("ttp_ingestor.requests.get", side_effect=_route):
             result = sync_from_github(
-                owner="o", repo="r", target_root=target,
+                owner="o",
+                repo="r",
+                target_root=target,
             )
 
         assert result["ok"] is True
@@ -150,11 +163,15 @@ class TestSyncSuccess:
         existing_sha = _git_blob_sha1(existing_content)
 
         listing_resp = MagicMock(status_code=200)
-        listing_resp.json.return_value = [{
-            "type": "file", "name": "x.md", "path": "x.md",
-            "sha": existing_sha,
-            "download_url": "https://example.com/x",
-        }]
+        listing_resp.json.return_value = [
+            {
+                "type": "file",
+                "name": "x.md",
+                "path": "x.md",
+                "sha": existing_sha,
+                "download_url": "https://example.com/x",
+            }
+        ]
 
         with patch("ttp_ingestor.requests.get", return_value=listing_resp) as mock_get:
             result = sync_from_github(owner="o", repo="r", target_root=target)
@@ -171,18 +188,26 @@ class TestSyncSuccess:
         root_listing = MagicMock(status_code=200)
         root_listing.json.return_value = [
             {"type": "dir", "name": "campaigns", "path": "campaigns"},
-            {"type": "file", "name": "README.md", "path": "README.md",
-             "sha": _git_blob_sha1(b"readme"),
-             "download_url": "https://example.com/readme"},
+            {
+                "type": "file",
+                "name": "README.md",
+                "path": "README.md",
+                "sha": _git_blob_sha1(b"readme"),
+                "download_url": "https://example.com/readme",
+            },
         ]
         sub_listing = MagicMock(status_code=200)
         sub_listing.json.return_value = [
-            {"type": "file", "name": "campaign.md", "path": "campaigns/campaign.md",
-             "sha": _git_blob_sha1(b"camp"),
-             "download_url": "https://example.com/camp"},
+            {
+                "type": "file",
+                "name": "campaign.md",
+                "path": "campaigns/campaign.md",
+                "sha": _git_blob_sha1(b"camp"),
+                "download_url": "https://example.com/camp",
+            },
         ]
         readme_resp = MagicMock(status_code=200, content=b"readme")
-        camp_resp   = MagicMock(status_code=200, content=b"camp")
+        camp_resp = MagicMock(status_code=200, content=b"camp")
 
         def _route(url, **kwargs):
             if url.endswith("/contents/"):
@@ -218,15 +243,22 @@ class TestSyncSuccess:
         (target / "fresh.md").write_text("kept")
 
         listing_resp = MagicMock(status_code=200)
-        listing_resp.json.return_value = [{
-            "type": "file", "name": "fresh.md", "path": "fresh.md",
-            "sha": _git_blob_sha1(b"kept"),
-            "download_url": "https://example.com/fresh",
-        }]
+        listing_resp.json.return_value = [
+            {
+                "type": "file",
+                "name": "fresh.md",
+                "path": "fresh.md",
+                "sha": _git_blob_sha1(b"kept"),
+                "download_url": "https://example.com/fresh",
+            }
+        ]
 
         with patch("ttp_ingestor.requests.get", return_value=listing_resp):
             result = sync_from_github(
-                owner="o", repo="r", target_root=target, delete_orphans=True,
+                owner="o",
+                repo="r",
+                target_root=target,
+                delete_orphans=True,
             )
 
         assert result["deleted"] == 1
@@ -253,6 +285,7 @@ class TestSyncSuccess:
 # Webhook route integration with the dashboard
 # ---------------------------------------------------------------------------
 
+
 class TestWebhookRoute:
     """Hit the dashboard's /webhook/github route with various scenarios."""
 
@@ -260,10 +293,13 @@ class TestWebhookRoute:
     def client(self, tmp_path):
         """A dashboard client with webhook config preloaded."""
         from dashboard import create_app
+
         app = create_app(
             quarantine_root=tmp_path / "quarantine",
             webhook_cfg={
-                "owner": "test", "repo": "ttp", "branch": "main",
+                "owner": "test",
+                "repo": "ttp",
+                "branch": "main",
                 "secret": "test-secret",
             },
         )
@@ -271,8 +307,9 @@ class TestWebhookRoute:
         return app.test_client()
 
     def test_no_signature_rejected_401(self, client):
-        resp = client.post("/webhook/github", data='{"ref":"refs/heads/main"}',
-                           content_type="application/json")
+        resp = client.post(
+            "/webhook/github", data='{"ref":"refs/heads/main"}', content_type="application/json"
+        )
         assert resp.status_code == 401
 
     def test_bad_signature_rejected_401(self, client):
@@ -288,7 +325,9 @@ class TestWebhookRoute:
         body = b'{"zen": "Always test"}'
         sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
         resp = client.post(
-            "/webhook/github", data=body, content_type="application/json",
+            "/webhook/github",
+            data=body,
+            content_type="application/json",
             headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "ping"},
         )
         assert resp.status_code == 200
@@ -298,9 +337,10 @@ class TestWebhookRoute:
         body = b'{"action":"opened"}'
         sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
         resp = client.post(
-            "/webhook/github", data=body, content_type="application/json",
-            headers={"X-Hub-Signature-256": sig,
-                     "X-GitHub-Event": "pull_request"},
+            "/webhook/github",
+            data=body,
+            content_type="application/json",
+            headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "pull_request"},
         )
         assert resp.status_code == 200
         assert b"ignored" in resp.data
@@ -309,7 +349,9 @@ class TestWebhookRoute:
         body = b'{"ref":"refs/heads/feature-branch"}'
         sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
         resp = client.post(
-            "/webhook/github", data=body, content_type="application/json",
+            "/webhook/github",
+            data=body,
+            content_type="application/json",
             headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "push"},
         )
         assert resp.status_code == 200
@@ -322,11 +364,17 @@ class TestWebhookRoute:
 
         with patch("dashboard.sync_from_github") as mock_sync:
             mock_sync.return_value = {
-                "ok": True, "fetched": 3, "skipped": 1,
-                "deleted": 0, "errors": [], "files": ["a.md", "b.md", "c.md"],
+                "ok": True,
+                "fetched": 3,
+                "skipped": 1,
+                "deleted": 0,
+                "errors": [],
+                "files": ["a.md", "b.md", "c.md"],
             }
             resp = client.post(
-                "/webhook/github", data=body, content_type="application/json",
+                "/webhook/github",
+                data=body,
+                content_type="application/json",
                 headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "push"},
             )
 
@@ -334,19 +382,22 @@ class TestWebhookRoute:
         mock_sync.assert_called_once()
         # Verify the sync was called with the configured owner/repo
         kwargs = mock_sync.call_args.kwargs
-        assert kwargs["owner"]  == "test"
-        assert kwargs["repo"]   == "ttp"
+        assert kwargs["owner"] == "test"
+        assert kwargs["repo"] == "ttp"
         assert kwargs["branch"] == "main"
 
     def test_no_secret_returns_503(self, tmp_path):
         """A dashboard with no webhook secret should reject all webhook calls."""
         from dashboard import create_app
+
         app = create_app(
             quarantine_root=tmp_path / "quarantine",
             webhook_cfg=None,
         )
         client = app.test_client()
         resp = client.post(
-            "/webhook/github", data=b'{}', content_type="application/json",
+            "/webhook/github",
+            data=b"{}",
+            content_type="application/json",
         )
         assert resp.status_code == 503

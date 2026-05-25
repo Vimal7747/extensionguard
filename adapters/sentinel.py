@@ -44,9 +44,9 @@ def send(alert: dict, cfg: dict) -> dict:
       {"ok": False, "error": "reason"}  on failure
     """
     workspace_id = cfg["workspace_id"]
-    shared_key   = cfg["shared_key"]
-    log_type     = cfg.get("log_type", "ExtensionGuardAlert")
-    timeout      = cfg.get("timeout_sec", 10)
+    shared_key = cfg["shared_key"]
+    log_type = cfg.get("log_type", "ExtensionGuardAlert")
+    timeout = cfg.get("timeout_sec", 10)
 
     # Flatten the nested alert dict into a flat structure.
     # Log Analytics custom columns are named like "extension_title_s" (s = string).
@@ -54,9 +54,9 @@ def send(alert: dict, cfg: dict) -> dict:
     flat_record = _flatten_alert(alert)
 
     # Log Analytics accepts a JSON *array* of records
-    body_json    = json.dumps([flat_record])
-    body_bytes   = body_json.encode("utf-8")
-    content_len  = len(body_bytes)
+    body_json = json.dumps([flat_record])
+    body_bytes = body_json.encode("utf-8")
+    content_len = len(body_bytes)
 
     # Build the RFC 1123 date string required in both the Authorization header
     # and the x-ms-date header
@@ -65,21 +65,21 @@ def send(alert: dict, cfg: dict) -> dict:
     # Build the HMAC-SHA256 Authorization header
     try:
         auth_header = _build_auth_header(
-            workspace_id = workspace_id,
-            shared_key   = shared_key,
-            date         = rfc1123_date,
-            content_len  = content_len,
-            content_type = "application/json",
-            resource     = "/api/logs",
+            workspace_id=workspace_id,
+            shared_key=shared_key,
+            date=rfc1123_date,
+            content_len=content_len,
+            content_type="application/json",
+            resource="/api/logs",
         )
     except Exception as exc:
         return {"ok": False, "error": f"Failed to build auth header: {exc}"}
 
     headers = {
-        "Content-Type":  "application/json",
+        "Content-Type": "application/json",
         "Authorization": auth_header,
-        "Log-Type":      log_type,
-        "x-ms-date":     rfc1123_date,
+        "Log-Type": log_type,
+        "x-ms-date": rfc1123_date,
         # Optional: set TimeStampField so Sentinel uses our alert_time
         "time-generated-field": "alert_time",
     }
@@ -88,9 +88,9 @@ def send(alert: dict, cfg: dict) -> dict:
 
     resp, err = post_with_retry(
         url,
-        data    = body_bytes,
-        headers = headers,
-        timeout = timeout,
+        data=body_bytes,
+        headers=headers,
+        timeout=timeout,
     )
 
     if err is not None:
@@ -112,13 +112,14 @@ def send(alert: dict, cfg: dict) -> dict:
 # HMAC-SHA256 signing
 # ---------------------------------------------------------------------------
 
+
 def _build_auth_header(
     workspace_id: str,
-    shared_key:   str,
-    date:         str,
-    content_len:  int,
+    shared_key: str,
+    date: str,
+    content_len: int,
     content_type: str,
-    resource:     str,
+    resource: str,
 ) -> str:
     """
     Build the SharedKey Authorization header required by the Log Analytics API.
@@ -126,13 +127,15 @@ def _build_auth_header(
     The canonical string to sign is:
       {method}\\n{content_length}\\n{content_type}\\nx-ms-date:{date}\\n{resource}
     """
-    string_to_sign = "\n".join([
-        "POST",
-        str(content_len),
-        content_type,
-        f"x-ms-date:{date}",
-        resource,
-    ])
+    string_to_sign = "\n".join(
+        [
+            "POST",
+            str(content_len),
+            content_type,
+            f"x-ms-date:{date}",
+            resource,
+        ]
+    )
 
     # Decode the base64 shared key into raw bytes before HMAC signing
     raw_key = base64.b64decode(shared_key)

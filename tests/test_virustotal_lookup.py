@@ -15,6 +15,7 @@ EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class TestLooksLikeSha256:
     def test_valid_hash(self):
         assert _looks_like_sha256(EMPTY_SHA256)
@@ -55,6 +56,7 @@ class TestPlaceholderDetection:
 # Lookup happy paths (mocked HTTP)
 # ---------------------------------------------------------------------------
 
+
 class TestLookupHashSuccess:
     def test_clean_file_scores_zero(self):
         """A file with 0 malicious/suspicious verdicts should add 0 to risk."""
@@ -64,8 +66,10 @@ class TestLookupHashSuccess:
             "data": {
                 "attributes": {
                     "last_analysis_stats": {
-                        "malicious": 0, "suspicious": 0,
-                        "harmless": 60, "undetected": 5,
+                        "malicious": 0,
+                        "suspicious": 0,
+                        "harmless": 60,
+                        "undetected": 5,
                     }
                 }
             }
@@ -85,9 +89,16 @@ class TestLookupHashSuccess:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "data": {"attributes": {"last_analysis_stats": {
-                "malicious": 1, "suspicious": 0, "harmless": 50, "undetected": 14,
-            }}}
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": {
+                        "malicious": 1,
+                        "suspicious": 0,
+                        "harmless": 50,
+                        "undetected": 14,
+                    }
+                }
+            }
         }
         with patch("virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
@@ -99,9 +110,16 @@ class TestLookupHashSuccess:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "data": {"attributes": {"last_analysis_stats": {
-                "malicious": 5, "suspicious": 0, "harmless": 45, "undetected": 15,
-            }}}
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": {
+                        "malicious": 5,
+                        "suspicious": 0,
+                        "harmless": 45,
+                        "undetected": 15,
+                    }
+                }
+            }
         }
         with patch("virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
@@ -113,9 +131,16 @@ class TestLookupHashSuccess:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "data": {"attributes": {"last_analysis_stats": {
-                "malicious": 25, "suspicious": 2, "harmless": 30, "undetected": 8,
-            }}}
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": {
+                        "malicious": 25,
+                        "suspicious": 2,
+                        "harmless": 30,
+                        "undetected": 8,
+                    }
+                }
+            }
         }
         with patch("virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
@@ -136,6 +161,7 @@ class TestLookupHashSuccess:
 # ---------------------------------------------------------------------------
 # Failure modes - each must return a clean error dict, not crash
 # ---------------------------------------------------------------------------
+
 
 class TestLookupHashFailures:
     def test_no_api_key_returns_skipped(self, monkeypatch):
@@ -181,15 +207,17 @@ class TestLookupHashFailures:
         assert "rate limit" in result["error"].lower()
 
     def test_timeout_handled(self):
-        with patch("virustotal_lookup.requests.get",
-                   side_effect=requests.exceptions.Timeout("slow")):
+        with patch(
+            "virustotal_lookup.requests.get", side_effect=requests.exceptions.Timeout("slow")
+        ):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["ok"] is False
         assert "timed out" in result["error"].lower()
 
     def test_connection_error_handled(self):
-        with patch("virustotal_lookup.requests.get",
-                   side_effect=requests.exceptions.ConnectionError("dns")):
+        with patch(
+            "virustotal_lookup.requests.get", side_effect=requests.exceptions.ConnectionError("dns")
+        ):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["ok"] is False
         assert "connection" in result["error"].lower()
@@ -209,12 +237,14 @@ class TestLookupHashFailures:
 # Env-var precedence
 # ---------------------------------------------------------------------------
 
+
 class TestApiKeyPrecedence:
     def test_env_var_used_when_present(self, monkeypatch):
         """VT_API_KEY env var should be preferred over cfg.api_key."""
         monkeypatch.setenv("VT_API_KEY", "env-key-1234567890")
 
         captured_headers = {}
+
         def _fake_get(url, headers=None, timeout=None):
             captured_headers.update(headers or {})
             mock = MagicMock()
@@ -231,6 +261,7 @@ class TestApiKeyPrecedence:
         monkeypatch.delenv("VT_API_KEY", raising=False)
 
         captured_headers = {}
+
         def _fake_get(url, headers=None, timeout=None):
             captured_headers.update(headers or {})
             mock = MagicMock()
@@ -247,6 +278,7 @@ class TestApiKeyPrecedence:
 # Integration with osv_lookup
 # ---------------------------------------------------------------------------
 
+
 class TestOsvIntegration:
     """Confirm run_osv_checks correctly merges VT score and flags."""
 
@@ -256,12 +288,15 @@ class TestOsvIntegration:
         import zipfile
 
         from osv_lookup import run_osv_checks
+
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", "{}")
 
-        with patch("osv_lookup._query_osv_hash", return_value=[]), \
-             patch("osv_lookup._query_osv_packages_batch", return_value=[]):
+        with (
+            patch("osv_lookup._query_osv_hash", return_value=[]),
+            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+        ):
             result = run_osv_checks(buf.getvalue(), {}, vt_cfg=None)
 
         assert result["vt"]["queried"] is False
@@ -271,14 +306,18 @@ class TestOsvIntegration:
         import zipfile
 
         from osv_lookup import run_osv_checks
+
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", "{}")
 
-        with patch("osv_lookup._query_osv_hash", return_value=[]), \
-             patch("osv_lookup._query_osv_packages_batch", return_value=[]):
+        with (
+            patch("osv_lookup._query_osv_hash", return_value=[]),
+            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+        ):
             result = run_osv_checks(
-                buf.getvalue(), {},
+                buf.getvalue(),
+                {},
                 vt_cfg={"enabled": False, "api_key": "x" * 32},
             )
 
@@ -290,6 +329,7 @@ class TestOsvIntegration:
         import zipfile
 
         from osv_lookup import run_osv_checks
+
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", "{}")
@@ -298,15 +338,25 @@ class TestOsvIntegration:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "data": {"attributes": {"last_analysis_stats": {
-                "malicious": 20, "suspicious": 0, "harmless": 30, "undetected": 5,
-            }}}
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": {
+                        "malicious": 20,
+                        "suspicious": 0,
+                        "harmless": 30,
+                        "undetected": 5,
+                    }
+                }
+            }
         }
-        with patch("osv_lookup._query_osv_hash", return_value=[]), \
-             patch("osv_lookup._query_osv_packages_batch", return_value=[]), \
-             patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with (
+            patch("osv_lookup._query_osv_hash", return_value=[]),
+            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+            patch("virustotal_lookup.requests.get", return_value=mock_resp),
+        ):
             result = run_osv_checks(
-                buf.getvalue(), {},
+                buf.getvalue(),
+                {},
                 vt_cfg={"enabled": True},
             )
 

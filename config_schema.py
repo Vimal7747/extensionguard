@@ -16,7 +16,6 @@
 # The user-facing tool prints them and exits with a non-zero code.
 
 
-
 VALID_SEVERITIES = ("low", "medium", "high", "critical")
 
 
@@ -25,18 +24,18 @@ VALID_SEVERITIES = ("low", "medium", "high", "critical")
 # ---------------------------------------------------------------------------
 
 ADAPTER_REQUIRED_KEYS = {
-    "sentinel":  {
+    "sentinel": {
         "workspace_id": str,
-        "shared_key":   str,
+        "shared_key": str,
     },
-    "splunk":    {
-        "hec_url":   str,
+    "splunk": {
+        "hec_url": str,
         "hec_token": str,
     },
     "pagerduty": {
         "integration_key": str,
     },
-    "slack":     {
+    "slack": {
         "webhook_url": str,
     },
 }
@@ -73,102 +72,124 @@ def validate(config: dict) -> list:
     for adapter_name, required in ADAPTER_REQUIRED_KEYS.items():
         section = config.get(adapter_name, {})
         if not isinstance(section, dict):
-            errors.append({
-                "section": adapter_name,
-                "key":     None,
-                "problem": f"section must be an object, got {type(section).__name__}",
-            })
+            errors.append(
+                {
+                    "section": adapter_name,
+                    "key": None,
+                    "problem": f"section must be an object, got {type(section).__name__}",
+                }
+            )
             continue
 
         if not section.get("enabled", False):
-            continue   # Disabled adapters are not validated
+            continue  # Disabled adapters are not validated
 
         for key, expected_type in required.items():
             value = section.get(key)
             if value is None or value == "":
-                errors.append({
-                    "section": adapter_name,
-                    "key":     key,
-                    "problem": "required when enabled, but missing or empty",
-                })
+                errors.append(
+                    {
+                        "section": adapter_name,
+                        "key": key,
+                        "problem": "required when enabled, but missing or empty",
+                    }
+                )
                 continue
 
             if not isinstance(value, expected_type):
-                errors.append({
-                    "section": adapter_name,
-                    "key":     key,
-                    "problem": (
-                        f"expected {expected_type.__name__}, "
-                        f"got {type(value).__name__}"
-                    ),
-                })
+                errors.append(
+                    {
+                        "section": adapter_name,
+                        "key": key,
+                        "problem": (
+                            f"expected {expected_type.__name__}, got {type(value).__name__}"
+                        ),
+                    }
+                )
                 continue
 
             if _is_placeholder(value):
-                errors.append({
-                    "section": adapter_name,
-                    "key":     key,
-                    "problem": (
-                        f"still set to placeholder value '{value}' - "
-                        "replace with your real credential"
-                    ),
-                })
+                errors.append(
+                    {
+                        "section": adapter_name,
+                        "key": key,
+                        "problem": (
+                            f"still set to placeholder value '{value}' - "
+                            "replace with your real credential"
+                        ),
+                    }
+                )
 
         # min_severity validation (optional but, if set, must be valid)
         min_sev = section.get("min_severity")
         if min_sev is not None and min_sev not in VALID_SEVERITIES:
-            errors.append({
-                "section": adapter_name,
-                "key":     "min_severity",
-                "problem": (
-                    f"must be one of {VALID_SEVERITIES}, got '{min_sev}'"
-                ),
-            })
+            errors.append(
+                {
+                    "section": adapter_name,
+                    "key": "min_severity",
+                    "problem": (f"must be one of {VALID_SEVERITIES}, got '{min_sev}'"),
+                }
+            )
 
         # URL fields should look like http(s) URLs
         for url_key in ("hec_url", "webhook_url"):
-            if url_key in section and section.get(url_key) and not section.get(url_key, "").startswith(("http://", "https://")):
-                errors.append({
-                    "section": adapter_name,
-                    "key":     url_key,
-                    "problem": "must start with http:// or https://",
-                })
+            if (
+                url_key in section
+                and section.get(url_key)
+                and not section.get(url_key, "").startswith(("http://", "https://"))
+            ):
+                errors.append(
+                    {
+                        "section": adapter_name,
+                        "key": url_key,
+                        "problem": "must start with http:// or https://",
+                    }
+                )
 
     # --- Dispatch-section validation ---------------------------------------
     dispatch = config.get("dispatch", {})
     if isinstance(dispatch, dict):
         ttl = dispatch.get("dedup_ttl_seconds")
         if ttl is not None and (not isinstance(ttl, int) or ttl < 0):
-            errors.append({
-                "section": "dispatch",
-                "key":     "dedup_ttl_seconds",
-                "problem": "must be a non-negative integer (seconds)",
-            })
+            errors.append(
+                {
+                    "section": "dispatch",
+                    "key": "dedup_ttl_seconds",
+                    "problem": "must be a non-negative integer (seconds)",
+                }
+            )
 
         threshold = dispatch.get("escalation_threshold")
         if threshold is not None and (not isinstance(threshold, int) or threshold < 1):
-            errors.append({
-                "section": "dispatch",
-                "key":     "escalation_threshold",
-                "problem": "must be a positive integer",
-            })
+            errors.append(
+                {
+                    "section": "dispatch",
+                    "key": "escalation_threshold",
+                    "problem": "must be a positive integer",
+                }
+            )
 
         min_sev = dispatch.get("min_severity")
         if min_sev is not None and min_sev not in VALID_SEVERITIES:
-            errors.append({
-                "section": "dispatch",
-                "key":     "min_severity",
-                "problem": f"must be one of {VALID_SEVERITIES}, got '{min_sev}'",
-            })
+            errors.append(
+                {
+                    "section": "dispatch",
+                    "key": "min_severity",
+                    "problem": f"must be one of {VALID_SEVERITIES}, got '{min_sev}'",
+                }
+            )
 
         triage_min = dispatch.get("triage_min_score")
-        if triage_min is not None and (not isinstance(triage_min, int)
-                                       or not 0 <= triage_min <= 100):
-            errors.append({
-                "section": "dispatch",
-                "key":     "triage_min_score",
-                "problem": "must be an integer in 0-100 range",
-            })
+        if triage_min is not None and (
+            not isinstance(triage_min, int) or not 0 <= triage_min <= 100
+        ):
+            errors.append(
+                {
+                    "section": "dispatch",
+                    "key": "triage_min_score",
+                    "problem": "must be an integer in 0-100 range",
+                }
+            )
 
     return errors
 
@@ -181,7 +202,7 @@ def format_errors(errors: list) -> str:
     lines = ["Configuration errors:"]
     for e in errors:
         section = e.get("section", "?")
-        key     = e.get("key")
+        key = e.get("key")
         problem = e.get("problem", "?")
         if key:
             lines.append(f"  - [{section}].{key}  --  {problem}")

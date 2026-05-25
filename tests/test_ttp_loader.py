@@ -69,7 +69,7 @@ class TestConcat:
         (ttp_root / "patterns" / "combo.md").write_text("Combo info")
         result = load_ttp_library(ttp_root)
         assert "TeamPCP info" in result
-        assert "Combo info"   in result
+        assert "Combo info" in result
 
     def test_source_comment_added(self, ttp_root):
         """Each file gets a `<!-- source: path -->` marker so Claude can tell
@@ -113,7 +113,7 @@ class TestCache:
 
     def test_new_file_invalidates_cache(self, ttp_root):
         (ttp_root / "a.md").write_text("alpha")
-        load_ttp_library(ttp_root)   # populate cache
+        load_ttp_library(ttp_root)  # populate cache
 
         time.sleep(1.1)
         (ttp_root / "b.md").write_text("bravo")
@@ -144,5 +144,5 @@ class TestLibraryStats:
         stats = library_stats(ttp_root)
         assert stats["exists"] is True
         assert stats["files"] == 2
-        assert stats["bytes"] == 7   # 3 + 4
+        assert stats["bytes"] == 7  # 3 + 4
         assert stats["latest_mtime"] > 0

@@ -36,9 +36,9 @@ PD_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue"
 # Map ExtensionGuard severity to PagerDuty's four-tier model
 PD_SEVERITY_MAP = {
     "critical": "critical",
-    "high":     "error",
-    "medium":   "warning",
-    "low":      "info",
+    "high": "error",
+    "medium": "warning",
+    "low": "info",
 }
 
 
@@ -57,51 +57,51 @@ def send(alert: dict, cfg: dict) -> dict:
     Returns {"ok": True, "incident_key": "..."} or {"ok": False, "error": "..."}.
     """
     integration_key = cfg["integration_key"]
-    min_severity    = cfg.get("min_severity", "high")
-    timeout         = cfg.get("timeout_sec", 10)
+    min_severity = cfg.get("min_severity", "high")
+    timeout = cfg.get("timeout_sec", 10)
 
     # Skip if this alert is below the configured minimum severity for PD
     if not _severity_meets_minimum(alert.get("severity", "low"), min_severity):
         return {"ok": True, "skipped": True, "reason": "Below min_severity threshold"}
 
-    ext   = alert.get("extension", {})
-    rule  = alert.get("rule", "UNKNOWN")
-    sev   = alert.get("severity", "low")
+    ext = alert.get("extension", {})
+    rule = alert.get("rule", "UNKNOWN")
+    sev = alert.get("severity", "low")
     mitre = ", ".join(alert.get("mitre", []))
     detail = alert.get("detail", {})
 
     # Build a human-readable summary for the PD incident title
     ext_name = ext.get("title") or ext.get("id") or "Unknown Extension"
-    summary  = f"[{sev.upper()}] {rule} - {ext_name}"
+    summary = f"[{sev.upper()}] {rule} - {ext_name}"
     if detail.get("description"):
         # Truncate to 255 chars (PD summary limit)
         summary = f"{summary}: {detail['description']}"[:255]
 
     # dedup_key ties this alert to a specific extension+rule so multiple
     # firings of the same rule update (rather than re-create) the incident
-    ext_id   = ext.get("id") or ext.get("title") or "unknown"
+    ext_id = ext.get("id") or ext.get("title") or "unknown"
     dedup_key = f"extguard-{rule}-{ext_id}"
 
     payload = {
-        "routing_key":  integration_key,
+        "routing_key": integration_key,
         "event_action": "trigger",
-        "dedup_key":    dedup_key,
+        "dedup_key": dedup_key,
         "payload": {
-            "summary":   summary,
-            "severity":  PD_SEVERITY_MAP.get(sev, "warning"),
-            "source":    "ExtensionGuard",
+            "summary": summary,
+            "severity": PD_SEVERITY_MAP.get(sev, "warning"),
+            "source": "ExtensionGuard",
             "timestamp": alert.get("alert_time", _now_iso()),
             "component": "browser_extension_monitor",
-            "group":     "supply_chain_security",
-            "class":     rule,
+            "group": "supply_chain_security",
+            "class": rule,
             "custom_details": {
-                "extension_id":    ext.get("id"),
-                "extension_name":  ext.get("title"),
-                "rule":            rule,
+                "extension_id": ext.get("id"),
+                "extension_name": ext.get("title"),
+                "rule": rule,
                 "mitre_techniques": mitre,
-                "description":     detail.get("description", ""),
-                "url":             detail.get("url", ""),
-                "full_alert":      json.dumps(alert, indent=2),
+                "description": detail.get("description", ""),
+                "url": detail.get("url", ""),
+                "full_alert": json.dumps(alert, indent=2),
             },
         },
         # Links allow analysts to jump to related resources
@@ -110,8 +110,8 @@ def send(alert: dict, cfg: dict) -> dict:
 
     resp, err = post_with_retry(
         PD_EVENTS_URL,
-        json    = payload,
-        timeout = timeout,
+        json=payload,
+        timeout=timeout,
     )
 
     if err is not None:
@@ -123,7 +123,7 @@ def send(alert: dict, cfg: dict) -> dict:
     if resp.status_code == 202 and data.get("status") == "success":
         log.info("PagerDuty incident triggered: %s", dedup_key)
         return {
-            "ok":           True,
+            "ok": True,
             "incident_key": data.get("dedup_key") or dedup_key,
         }
     else:
@@ -140,16 +140,16 @@ def resolve(rule: str, extension_id: str, cfg: dict) -> dict:
     Call this from the remediation module (Stage 5) after kill/quarantine.
     """
     integration_key = cfg["integration_key"]
-    dedup_key       = f"extguard-{rule}-{extension_id}"
+    dedup_key = f"extguard-{rule}-{extension_id}"
 
     payload = {
-        "routing_key":  integration_key,
+        "routing_key": integration_key,
         "event_action": "resolve",
-        "dedup_key":    dedup_key,
+        "dedup_key": dedup_key,
         "payload": {
-            "summary":  f"Resolved by ExtensionGuard: {rule} - {extension_id}",
+            "summary": f"Resolved by ExtensionGuard: {rule} - {extension_id}",
             "severity": "info",
-            "source":   "ExtensionGuard",
+            "source": "ExtensionGuard",
         },
     }
 
@@ -165,6 +165,7 @@ def resolve(rule: str, extension_id: str, cfg: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _severity_meets_minimum(severity: str, minimum: str) -> bool:
     """Return True if `severity` is >= `minimum` in the four-tier scale."""

@@ -122,7 +122,6 @@ def triage_extension(
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=2048,
-
         # System prompt has TWO blocks:
         #   Block 1 — short role description (NOT cached, changes rarely enough
         #             that it doesn't benefit from caching)
@@ -151,13 +150,8 @@ def triage_extension(
                 "cache_control": {"type": "ephemeral"},
             },
         ],
-
-        messages=[
-            {"role": "user", "content": user_message}
-        ],
-
+        messages=[{"role": "user", "content": user_message}],
         tools=[TRIAGE_TOOL],
-
         # Force Claude to always call the tool — no free-form text responses.
         # This guarantees a parseable structured output every time.
         tool_choice={"type": "tool", "name": "submit_triage"},
@@ -179,15 +173,15 @@ def triage_extension(
         )
 
     return TriageResult(
-        risk_score        = tool_input["risk_score"],
-        risk_level        = _score_to_level(tool_input["risk_score"]),
-        iocs              = tool_input["iocs"],
-        mitre_techniques  = tool_input["mitre_techniques"],
-        analyst_narrative = tool_input["analyst_narrative"],
-        permission_score  = permission_score,
-        manifest          = manifest,
-        extension_name    = manifest.name,
-        file_path         = file_path,
+        risk_score=tool_input["risk_score"],
+        risk_level=_score_to_level(tool_input["risk_score"]),
+        iocs=tool_input["iocs"],
+        mitre_techniques=tool_input["mitre_techniques"],
+        analyst_narrative=tool_input["analyst_narrative"],
+        permission_score=permission_score,
+        manifest=manifest,
+        extension_name=manifest.name,
+        file_path=file_path,
     )
 
 
@@ -234,7 +228,7 @@ def _sanitise_for_prompt(value):
             return {k: _sanitise_for_prompt(v) for k, v in value.items()}
         return [_sanitise_for_prompt(v) for v in value]
     if isinstance(value, (int, float, bool)):
-        return value   # Non-string scalars can't carry injection text
+        return value  # Non-string scalars can't carry injection text
 
     s = str(value)
     truncated = False
@@ -247,7 +241,7 @@ def _sanitise_for_prompt(value):
 
     # Neutralise markdown fence delimiters so the manifest can't break out
     # of the ```json ... ``` block in our prompt.
-    s = s.replace("```", "ʻʻʻ")   # Use unicode look-alike triple-prime
+    s = s.replace("```", "ʻʻʻ")  # Use unicode look-alike triple-prime
 
     if truncated:
         s = s + " [...TRUNCATED BY EXTENSIONGUARD...]"
@@ -267,10 +261,10 @@ def _build_user_message(
     We also surround the manifest with an explicit "treat as untrusted data"
     boundary so the model knows not to follow any instructions found inside.
     """
-    safe_name        = _sanitise_for_prompt(manifest.name)
-    safe_version     = _sanitise_for_prompt(manifest.version)
-    safe_raw         = _sanitise_for_prompt(manifest.raw)
-    safe_file_path   = _sanitise_for_prompt(file_path)
+    safe_name = _sanitise_for_prompt(manifest.name)
+    safe_version = _sanitise_for_prompt(manifest.version)
+    safe_raw = _sanitise_for_prompt(manifest.raw)
+    safe_file_path = _sanitise_for_prompt(file_path)
 
     return f"""
 Please triage this Chrome extension and call submit_triage with your findings.

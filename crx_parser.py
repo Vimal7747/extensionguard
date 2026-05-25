@@ -63,9 +63,7 @@ def parse_crx(file_path: str) -> tuple:
     elif raw_bytes[:4] == CRX_MAGIC:
         zip_bytes = _strip_crx_header(raw_bytes)
     else:
-        raise ValueError(
-            "Unrecognised file format — expected a .crx, .zip, or manifest.json"
-        )
+        raise ValueError("Unrecognised file format — expected a .crx, .zip, or manifest.json")
 
     manifest = _extract_manifest_from_zip(zip_bytes)
     return zip_bytes, manifest
@@ -74,6 +72,7 @@ def parse_crx(file_path: str) -> tuple:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _strip_crx_header(raw_bytes: bytes) -> bytes:
     """
@@ -89,9 +88,7 @@ def _strip_crx_header(raw_bytes: bytes) -> bytes:
 
     # Need at least 12 bytes to even read the version + header_length field
     if total_len < 12:
-        raise ValueError(
-            f"CRX file truncated - need at least 12 bytes for header, got {total_len}"
-        )
+        raise ValueError(f"CRX file truncated - need at least 12 bytes for header, got {total_len}")
 
     version = struct.unpack_from("<I", raw_bytes, 4)[0]  # bytes 4–7, little-endian
 
@@ -113,8 +110,8 @@ def _strip_crx_header(raw_bytes: bytes) -> bytes:
             raise ValueError("CRX2 file truncated - need at least 16 bytes for header")
         # Skip public key and signature blobs
         pubkey_len = struct.unpack_from("<I", raw_bytes, 8)[0]
-        sig_len    = struct.unpack_from("<I", raw_bytes, 12)[0]
-        zip_start  = 16 + pubkey_len + sig_len
+        sig_len = struct.unpack_from("<I", raw_bytes, 12)[0]
+        zip_start = 16 + pubkey_len + sig_len
         if zip_start > total_len:
             raise ValueError(
                 f"CRX2 pubkey ({pubkey_len}) + signature ({sig_len}) lengths exceed "
@@ -154,21 +151,21 @@ def _build_manifest_info(raw: dict) -> ManifestInfo:
     """
     # In MV2, separate out URL patterns from named API permissions
     all_perms = raw.get("permissions", [])
-    api_perms   = [p for p in all_perms if not _looks_like_url_pattern(p)]
-    host_perms  = [p for p in all_perms if _looks_like_url_pattern(p)]
+    api_perms = [p for p in all_perms if not _looks_like_url_pattern(p)]
+    host_perms = [p for p in all_perms if _looks_like_url_pattern(p)]
 
     # MV3 puts host_permissions explicitly — merge any extras
     host_perms += raw.get("host_permissions", [])
 
     return ManifestInfo(
-        name             = raw.get("name", "Unknown"),
-        version          = raw.get("version", "Unknown"),
-        manifest_version = raw.get("manifest_version", 2),
-        permissions      = api_perms,
-        host_permissions = list(set(host_perms)),   # deduplicate
-        content_scripts  = raw.get("content_scripts", []),
-        background       = raw.get("background", {}),
-        raw              = raw,
+        name=raw.get("name", "Unknown"),
+        version=raw.get("version", "Unknown"),
+        manifest_version=raw.get("manifest_version", 2),
+        permissions=api_perms,
+        host_permissions=list(set(host_perms)),  # deduplicate
+        content_scripts=raw.get("content_scripts", []),
+        background=raw.get("background", {}),
+        raw=raw,
     )
 
 

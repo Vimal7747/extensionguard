@@ -13,6 +13,7 @@ from crx_parser import _looks_like_url_pattern, parse_crx
 # Format-detection tests
 # ---------------------------------------------------------------------------
 
+
 class TestFormatDetection:
     """The parser must correctly identify CRX2/3/zip/json inputs."""
 
@@ -42,7 +43,7 @@ class TestFormatDetection:
         path = tmp_path / "manifest.json"
         path.write_text(json.dumps(benign_manifest_raw))
         zip_bytes, manifest = parse_crx(str(path))
-        assert zip_bytes is None   # No ZIP available for bare manifests
+        assert zip_bytes is None  # No ZIP available for bare manifests
         assert manifest.name == "Dark Mode for Docs"
 
     def test_parses_any_json_file(self, tmp_path, teamccp_manifest_raw):
@@ -56,6 +57,7 @@ class TestFormatDetection:
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
+
 
 class TestErrors:
     """Malformed inputs must raise informative errors, not crash."""
@@ -113,10 +115,13 @@ class TestErrors:
 
     def test_crx2_with_oversized_pubkey_length(self, tmp_path):
         """CRX2 declaring pubkey + sig lengths past the file must be rejected."""
-        crx = (b"Cr24" + struct.pack("<I", 2)
-               + struct.pack("<I", 0xFFFFFFFF)   # pubkey_len
-               + struct.pack("<I", 0)            # sig_len
-               + b"tail")
+        crx = (
+            b"Cr24"
+            + struct.pack("<I", 2)
+            + struct.pack("<I", 0xFFFFFFFF)  # pubkey_len
+            + struct.pack("<I", 0)  # sig_len
+            + b"tail"
+        )
         path = tmp_path / "bad_crx2.crx"
         path.write_bytes(crx)
         with pytest.raises(ValueError, match="exceed"):
@@ -125,7 +130,7 @@ class TestErrors:
     def test_truncated_crx_rejected(self, tmp_path):
         """A 6-byte file claiming to be CRX must be rejected, not crash."""
         path = tmp_path / "tiny.crx"
-        path.write_bytes(b"Cr24\x03\x00")   # Magic + 2 bytes of "version" then EOF
+        path.write_bytes(b"Cr24\x03\x00")  # Magic + 2 bytes of "version" then EOF
         with pytest.raises(ValueError, match="truncated"):
             parse_crx(str(path))
 
@@ -133,6 +138,7 @@ class TestErrors:
 # ---------------------------------------------------------------------------
 # MV2 vs MV3 permission flattening
 # ---------------------------------------------------------------------------
+
 
 class TestManifestFlattening:
     """In MV2, host patterns live inside permissions[]. The parser must split them out."""
@@ -144,10 +150,10 @@ class TestManifestFlattening:
             "name": "MV2 Test",
             "version": "1.0",
             "permissions": [
-                "storage",                # API permission
-                "cookies",                # API permission
-                "<all_urls>",             # host pattern
-                "https://github.com/*",   # host pattern
+                "storage",  # API permission
+                "cookies",  # API permission
+                "<all_urls>",  # host pattern
+                "https://github.com/*",  # host pattern
             ],
         }
         path = tmp_path / "mv2.json"
@@ -155,8 +161,8 @@ class TestManifestFlattening:
         _, manifest = parse_crx(str(path))
 
         # API permissions should not contain URL patterns
-        assert "storage"  in manifest.permissions
-        assert "cookies"  in manifest.permissions
+        assert "storage" in manifest.permissions
+        assert "cookies" in manifest.permissions
         assert "<all_urls>" not in manifest.permissions
         assert "https://github.com/*" not in manifest.permissions
 

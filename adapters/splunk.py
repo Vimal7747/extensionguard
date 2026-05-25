@@ -37,37 +37,37 @@ def send(alert: dict, cfg: dict) -> dict:
 
     Returns {"ok": True} or {"ok": False, "error": "reason"}.
     """
-    hec_url    = cfg["hec_url"]
-    hec_token  = cfg["hec_token"]
-    index      = cfg.get("index",      "security")
+    hec_url = cfg["hec_url"]
+    hec_token = cfg["hec_token"]
+    index = cfg.get("index", "security")
     sourcetype = cfg.get("sourcetype", "extguard:alert")
     ssl_verify = cfg.get("ssl_verify", True)
-    timeout    = cfg.get("timeout_sec", 10)
+    timeout = cfg.get("timeout_sec", 10)
 
     # Convert ISO 8601 alert_time to Unix epoch float for Splunk's _time field
     epoch_time = _iso_to_epoch(alert.get("alert_time", ""))
 
     # Splunk HEC wrapper — the actual alert goes inside "event"
     payload = {
-        "time":       epoch_time,
-        "source":     "extguard",
+        "time": epoch_time,
+        "source": "extguard",
         "sourcetype": sourcetype,
-        "index":      index,
-        "event":      alert,
+        "index": index,
+        "event": alert,
     }
 
     headers = {
         "Authorization": f"Splunk {hec_token}",
-        "Content-Type":  "application/json",
+        "Content-Type": "application/json",
     }
 
     # post_with_retry handles transient 5xx and network errors with backoff
     resp, err = post_with_retry(
         hec_url,
-        json    = payload,
-        headers = headers,
-        timeout = timeout,
-        verify  = ssl_verify,
+        json=payload,
+        headers=headers,
+        timeout=timeout,
+        verify=ssl_verify,
     )
 
     if err is not None:

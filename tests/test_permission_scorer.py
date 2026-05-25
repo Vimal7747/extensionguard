@@ -11,8 +11,9 @@ from permission_scorer import (
 )
 
 
-def _make_manifest(permissions=None, host_permissions=None,
-                   content_scripts=None, persistent_bg=False) -> ManifestInfo:
+def _make_manifest(
+    permissions=None, host_permissions=None, content_scripts=None, persistent_bg=False
+) -> ManifestInfo:
     """Build a minimal ManifestInfo for scoring tests."""
     return ManifestInfo(
         name="Test",
@@ -30,18 +31,22 @@ def _make_manifest(permissions=None, host_permissions=None,
 # Score-to-level mapping
 # ---------------------------------------------------------------------------
 
+
 class TestScoreToLevel:
-    @pytest.mark.parametrize("score,expected", [
-        (0,   "low"),
-        (10,  "low"),
-        (19,  "low"),
-        (20,  "medium"),
-        (44,  "medium"),
-        (45,  "high"),
-        (69,  "high"),
-        (70,  "critical"),
-        (100, "critical"),
-    ])
+    @pytest.mark.parametrize(
+        "score,expected",
+        [
+            (0, "low"),
+            (10, "low"),
+            (19, "low"),
+            (20, "medium"),
+            (44, "medium"),
+            (45, "high"),
+            (69, "high"),
+            (70, "critical"),
+            (100, "critical"),
+        ],
+    )
     def test_boundaries(self, score, expected):
         assert _score_to_level(score) == expected
 
@@ -49,6 +54,7 @@ class TestScoreToLevel:
 # ---------------------------------------------------------------------------
 # Individual permission scoring
 # ---------------------------------------------------------------------------
+
 
 class TestSinglePermissions:
     """Each named permission should add its weight."""
@@ -82,6 +88,7 @@ class TestSinglePermissions:
 # Broad host access
 # ---------------------------------------------------------------------------
 
+
 class TestHostPermissions:
     def test_all_urls_contributes_points(self):
         manifest = _make_manifest(host_permissions=["<all_urls>"])
@@ -99,6 +106,7 @@ class TestHostPermissions:
 # ---------------------------------------------------------------------------
 # Combo bonuses - the key TTP-matching logic
 # ---------------------------------------------------------------------------
+
 
 class TestComboBonuses:
     """Permission combinations that match known attack chains should be flagged."""
@@ -122,7 +130,7 @@ class TestComboBonuses:
 
     def test_no_combo_if_missing_one_perm(self):
         """The TeamPCP combo needs ALL of cookies+tabs+storage. Missing one = no combo."""
-        manifest = _make_manifest(permissions=["cookies", "tabs"])   # missing storage
+        manifest = _make_manifest(permissions=["cookies", "tabs"])  # missing storage
         result = score_permissions(manifest)
         combo_keys = [k for k in result.breakdown if "cookies+storage+tabs" in k]
         assert not combo_keys
@@ -131,6 +139,7 @@ class TestComboBonuses:
 # ---------------------------------------------------------------------------
 # Score clamping
 # ---------------------------------------------------------------------------
+
 
 class TestScoreClamping:
     """Total scores must be clamped to 0-100."""
@@ -159,20 +168,17 @@ class TestScoreClamping:
 # Content script + background page
 # ---------------------------------------------------------------------------
 
+
 class TestContentScripts:
     def test_content_script_on_all_urls_flagged(self):
-        manifest = _make_manifest(
-            content_scripts=[{"matches": ["<all_urls>"]}]
-        )
+        manifest = _make_manifest(content_scripts=[{"matches": ["<all_urls>"]}])
         result = score_permissions(manifest)
         assert "content_scripts_all_urls" in result.breakdown
         assert any("ALL pages" in note for note in result.notes)
 
     def test_scoped_content_script_not_flagged(self):
         """A content script only on docs.google.com should not be flagged."""
-        manifest = _make_manifest(
-            content_scripts=[{"matches": ["*://docs.google.com/*"]}]
-        )
+        manifest = _make_manifest(content_scripts=[{"matches": ["*://docs.google.com/*"]}])
         result = score_permissions(manifest)
         assert "content_scripts_all_urls" not in result.breakdown
 
@@ -188,11 +194,13 @@ class TestBackgroundPage:
 # End-to-end: real fixtures
 # ---------------------------------------------------------------------------
 
+
 class TestRealManifests:
     """Score the canonical attack fixtures and the benign one."""
 
     def test_teamccp_scores_critical(self, teamccp_manifest_raw):
         from crx_parser import _build_manifest_info
+
         manifest = _build_manifest_info(teamccp_manifest_raw)
         result = score_permissions(manifest)
         assert result.risk_level == "critical"
@@ -200,6 +208,7 @@ class TestRealManifests:
 
     def test_benign_scores_low(self, benign_manifest_raw):
         from crx_parser import _build_manifest_info
+
         manifest = _build_manifest_info(benign_manifest_raw)
         result = score_permissions(manifest)
         assert result.risk_level == "low"
@@ -207,6 +216,7 @@ class TestRealManifests:
 
     def test_shai_hulud_scores_high_or_critical(self, shai_hulud_manifest_raw):
         from crx_parser import _build_manifest_info
+
         manifest = _build_manifest_info(shai_hulud_manifest_raw)
         result = score_permissions(manifest)
         assert result.risk_level in ("high", "critical")

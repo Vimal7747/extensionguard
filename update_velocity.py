@@ -26,9 +26,9 @@ HISTORY_FILE = Path.home() / ".extguard" / "version_history.json"
 # A MAJOR bump (1.x → 2.x) in a supply chain attack is unusual — attackers
 # usually hide inside minor/patch updates to avoid drawing attention.
 # But a very large jump in ANY segment is suspicious.
-SUSPICIOUS_MAJOR_JUMP    = 2    # e.g., 1.x → 4.x is suspicious
-SUSPICIOUS_MINOR_JUMP    = 10   # e.g., x.1.y → x.15.y
-SUSPICIOUS_PATCH_JUMP    = 50   # e.g., x.y.1 → x.y.55
+SUSPICIOUS_MAJOR_JUMP = 2  # e.g., 1.x → 4.x is suspicious
+SUSPICIOUS_MINOR_JUMP = 10  # e.g., x.1.y → x.15.y
+SUSPICIOUS_PATCH_JUMP = 50  # e.g., x.y.1 → x.y.55
 
 
 def analyse_version(
@@ -56,20 +56,18 @@ def analyse_version(
       flags               list[str]
     """
     result = {
-        "current_version":  manifest_version,
+        "current_version": manifest_version,
         "previous_version": None,
-        "cws_version":      cws_version,
-        "version_jump":     None,
-        "is_suspicious":    False,
-        "velocity_score":   0,
-        "flags":            [],
+        "cws_version": cws_version,
+        "version_jump": None,
+        "is_suspicious": False,
+        "velocity_score": 0,
+        "flags": [],
     }
 
     current = _parse_version(manifest_version)
     if not current:
-        result["flags"].append(
-            f"Could not parse version string: '{manifest_version}'"
-        )
+        result["flags"].append(f"Could not parse version string: '{manifest_version}'")
         return result
 
     # --- Check against local history --------------------------------------
@@ -78,7 +76,7 @@ def analyse_version(
 
     if previous_record:
         previous_str = previous_record.get("version", "")
-        previous     = _parse_version(previous_str)
+        previous = _parse_version(previous_str)
         result["previous_version"] = previous_str
 
         if previous and current != previous:
@@ -87,7 +85,7 @@ def analyse_version(
 
             suspicious, flag = _evaluate_jump(jump, previous_str, manifest_version)
             if suspicious:
-                result["is_suspicious"]   = True
+                result["is_suspicious"] = True
                 result["velocity_score"] += 10
                 result["flags"].append(flag)
 
@@ -109,9 +107,7 @@ def analyse_version(
     # --- Low version number heuristic ------------------------------------
     if current[0] == 0 and current[1] == 0:
         result["velocity_score"] += 3
-        result["flags"].append(
-            "Extension is at major version 0 — very early / brand-new release"
-        )
+        result["flags"].append("Extension is at major version 0 — very early / brand-new release")
 
     result["velocity_score"] = min(result["velocity_score"], 15)
 
@@ -124,6 +120,7 @@ def analyse_version(
 # ---------------------------------------------------------------------------
 # Version string parsing
 # ---------------------------------------------------------------------------
+
 
 def _parse_version(version_str: str) -> tuple | None:
     """
@@ -151,8 +148,8 @@ def _compute_jump(old: tuple, new: tuple) -> dict:
     Pads shorter tuples with zeros to make them the same length.
     """
     length = max(len(old), len(new))
-    old_p  = old + (0,) * (length - len(old))
-    new_p  = new + (0,) * (length - len(new))
+    old_p = old + (0,) * (length - len(old))
+    new_p = new + (0,) * (length - len(new))
     return {
         "major": new_p[0] - old_p[0] if length > 0 else 0,
         "minor": new_p[1] - old_p[1] if length > 1 else 0,
@@ -175,29 +172,24 @@ def _evaluate_jump(jump: dict, old_str: str, new_str: str) -> tuple:
             f"(delta: +{major} major) — could indicate supply chain injection"
         )
     if minor >= SUSPICIOUS_MINOR_JUMP:
-        return True, (
-            f"Large MINOR version jump: {old_str} -> {new_str} "
-            f"(delta: +{minor} minor)"
-        )
+        return True, (f"Large MINOR version jump: {old_str} -> {new_str} (delta: +{minor} minor)")
     if patch >= SUSPICIOUS_PATCH_JUMP:
-        return True, (
-            f"Large PATCH version jump: {old_str} -> {new_str} "
-            f"(delta: +{patch} patch)"
-        )
+        return True, (f"Large PATCH version jump: {old_str} -> {new_str} (delta: +{patch} patch)")
     return False, ""
 
 
 def _tuple_gt(a: tuple, b: tuple) -> bool:
     """Return True if version tuple a > tuple b."""
     length = max(len(a), len(b))
-    a_p    = a + (0,) * (length - len(a))
-    b_p    = b + (0,) * (length - len(b))
+    a_p = a + (0,) * (length - len(a))
+    b_p = b + (0,) * (length - len(b))
     return a_p > b_p
 
 
 # ---------------------------------------------------------------------------
 # Persistent version history (JSON file in ~/.extguard/)
 # ---------------------------------------------------------------------------
+
 
 def _load_history(key: str) -> dict | None:
     """Load the history record for `key` from the local store."""
@@ -237,9 +229,9 @@ def _save_history(key: str, version: str, name: str | None):
                 pass
 
         existing[key] = {
-            "version":    version,
-            "name":       name,
-            "last_seen":  datetime.now(timezone.utc).isoformat(),
+            "version": version,
+            "name": name,
+            "last_seen": datetime.now(timezone.utc).isoformat(),
         }
 
         # Atomic write: tempfile in the same directory (so rename is atomic),

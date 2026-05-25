@@ -36,6 +36,7 @@ from update_velocity import analyse_version
 # Stage 1a - CRX parsing
 # ---------------------------------------------------------------------------
 
+
 class TestCrxParserBench:
     """How fast can we crack open a CRX and extract its manifest?"""
 
@@ -55,6 +56,7 @@ class TestCrxParserBench:
 # Stage 1b - permission scoring
 # ---------------------------------------------------------------------------
 
+
 class TestPermissionScorerBench:
     def test_score_malicious_manifest(self, benchmark, teamccp_manifest):
         """TeamPCP profile - exercises every combo + content_script + bg checks."""
@@ -67,6 +69,7 @@ class TestPermissionScorerBench:
 # Stage 1c - publisher checker (offline)
 # ---------------------------------------------------------------------------
 
+
 class TestPublisherBench:
     def test_check_publisher_no_network(self, benchmark, teamccp_manifest):
         """Offline path - no CWS query, just local update_url validation."""
@@ -77,6 +80,7 @@ class TestPublisherBench:
 # ---------------------------------------------------------------------------
 # Stage 1d - OSV ZIP content scan
 # ---------------------------------------------------------------------------
+
 
 class TestOsvBench:
     def test_scan_zip_contents(self, benchmark, medium_crx_bytes):
@@ -90,16 +94,17 @@ class TestOsvBench:
 # Stage 1e - version velocity analysis
 # ---------------------------------------------------------------------------
 
+
 class TestVelocityBench:
     def test_analyse_version_first_run(self, benchmark, tmp_path, monkeypatch):
         """First-run cost: parse + write to history file."""
         import update_velocity
+
         history_path = tmp_path / "version_history.json"
         monkeypatch.setattr(update_velocity, "HISTORY_FILE", history_path)
 
         def run():
-            return analyse_version("17.3.1", extension_id="test-ext-id",
-                                   extension_name="X")
+            return analyse_version("17.3.1", extension_id="test-ext-id", extension_name="X")
 
         benchmark(run)
 
@@ -107,6 +112,7 @@ class TestVelocityBench:
 # ---------------------------------------------------------------------------
 # TTP library loader - cold vs warm cache
 # ---------------------------------------------------------------------------
+
 
 class TestTtpLoaderBench:
     """The loader is called inside Stage 2 - hot-path performance matters."""
@@ -138,6 +144,7 @@ class TestTtpLoaderBench:
 # Stage 4 - dispatcher hot path (without real HTTP)
 # ---------------------------------------------------------------------------
 
+
 class TestDispatcherBench:
     def test_dedup_check(self, benchmark, sample_alert):
         """How fast is the dedup decision per incoming alert?"""
@@ -157,6 +164,7 @@ class TestDispatcherBench:
 # Stage 5 - forensics preserve + verify
 # ---------------------------------------------------------------------------
 
+
 class TestForensicsBench:
     def test_preserve_50kb_crx(self, benchmark, tmp_path, medium_crx_bytes, teamccp_manifest):
         """Time to write a full case folder: sample.crx + manifest + CoC + hashes."""
@@ -167,11 +175,11 @@ class TestForensicsBench:
             counter["n"] += 1
             qroot = tmp_path / f"q{counter['n']}"
             return forensics.preserve(
-                extension_id    = "abcdefghijklmnopqrstuvwxyzabcdef",
-                extension_name  = "Bench",
-                crx_bytes       = medium_crx_bytes,
-                manifest        = teamccp_manifest,
-                quarantine_root = qroot,
+                extension_id="abcdefghijklmnopqrstuvwxyzabcdef",
+                extension_name="Bench",
+                crx_bytes=medium_crx_bytes,
+                manifest=teamccp_manifest,
+                quarantine_root=qroot,
             )
 
         result = benchmark(run)
@@ -180,11 +188,11 @@ class TestForensicsBench:
     def test_verify_case(self, benchmark, tmp_path, medium_crx_bytes, teamccp_manifest):
         """Time to re-hash every artifact in an existing case folder."""
         result = forensics.preserve(
-            extension_id    = "abcdefghijklmnopqrstuvwxyzabcdef",
-            extension_name  = "Bench",
-            crx_bytes       = medium_crx_bytes,
-            manifest        = teamccp_manifest,
-            quarantine_root = tmp_path,
+            extension_id="abcdefghijklmnopqrstuvwxyzabcdef",
+            extension_name="Bench",
+            crx_bytes=medium_crx_bytes,
+            manifest=teamccp_manifest,
+            quarantine_root=tmp_path,
         )
         case_dir = result["case_dir"]
         benchmark(forensics.verify_case, case_dir)
@@ -193,6 +201,7 @@ class TestForensicsBench:
 # ---------------------------------------------------------------------------
 # Credential rotation playbook generator
 # ---------------------------------------------------------------------------
+
 
 class TestCredRotationBench:
     def test_generate_all_urls_playbook(self, benchmark):
@@ -210,6 +219,7 @@ class TestCredRotationBench:
 # ---------------------------------------------------------------------------
 # Sigma generator
 # ---------------------------------------------------------------------------
+
 
 class TestSigmaBench:
     def test_generate_all_rules(self, benchmark):

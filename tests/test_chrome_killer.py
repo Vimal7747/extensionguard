@@ -17,6 +17,7 @@ from remediators import chrome_killer
 # Cross-platform dispatcher
 # ---------------------------------------------------------------------------
 
+
 class TestDispatcher:
     def test_dispatcher_picks_windows(self):
         """On Windows, block_extension should route to block_extension_windows."""
@@ -51,6 +52,7 @@ class TestDispatcher:
 # Dry-run mode - safe to run on any host
 # ---------------------------------------------------------------------------
 
+
 class TestDryRun:
     """Dry-run must NEVER touch real state. These tests are safe on every OS."""
 
@@ -82,9 +84,7 @@ class TestDryRun:
 
     def test_workspace_missing_config_returns_error(self):
         """Without service_account_json or customer_id, surface a clear error."""
-        result = chrome_killer.block_extension_workspace(
-            "abc", "/", cfg={}
-        )
+        result = chrome_killer.block_extension_workspace("abc", "/", cfg={})
         assert result["ok"] is False
         assert "service_account_json" in result["error"]
 
@@ -99,6 +99,7 @@ class TestDryRun:
 # ---------------------------------------------------------------------------
 # Workspace Admin SDK integration (real implementation tests with mocks)
 # ---------------------------------------------------------------------------
+
 
 class TestWorkspaceImpl:
     """Tests the real CBCM Chrome Policy API code path with mocks - we never
@@ -149,6 +150,7 @@ class TestWorkspaceImpl:
 # Linux policy file actual write (uses tmp_path - safe)
 # ---------------------------------------------------------------------------
 
+
 class TestLinuxPolicyFile:
     """Test real (non-dry-run) Linux policy file write, but in tmp_path."""
 
@@ -166,9 +168,7 @@ class TestLinuxPolicyFile:
 
     def test_appends_to_existing_policy_file(self, tmp_path, monkeypatch):
         policy_file = tmp_path / "test_policy.json"
-        policy_file.write_text(json.dumps({
-            "ExtensionInstallBlocklist": ["pre-existing-id"]
-        }))
+        policy_file.write_text(json.dumps({"ExtensionInstallBlocklist": ["pre-existing-id"]}))
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", policy_file)
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_DIR", tmp_path)
 
@@ -176,7 +176,7 @@ class TestLinuxPolicyFile:
 
         data = json.loads(policy_file.read_text())
         assert "pre-existing-id" in data["ExtensionInstallBlocklist"]
-        assert "new-id"          in data["ExtensionInstallBlocklist"]
+        assert "new-id" in data["ExtensionInstallBlocklist"]
 
     def test_does_not_duplicate_ids(self, tmp_path, monkeypatch):
         """Adding the same ID twice should not create duplicate entries."""
@@ -195,6 +195,7 @@ class TestLinuxPolicyFile:
 # Windows registry helpers - test only via mock since winreg is OS-locked
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.skipif(platform.system() != "Windows", reason="Windows-only registry test")
 class TestWindowsHelpers:
     """These tests only run on Windows since winreg isn't importable elsewhere."""
@@ -206,6 +207,7 @@ class TestWindowsHelpers:
         # We can't easily create a temp HKLM key, so just test the function
         # signature/behavior with a mock
         from unittest.mock import MagicMock
+
         fake_key = MagicMock()
         # First QueryValueEx call should raise FileNotFoundError (slot 1 free)
         fake_key.__class__ = type(fake_key)

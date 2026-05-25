@@ -30,6 +30,7 @@ def _make_zip(files: dict) -> bytes:
 # OSV hash query
 # ---------------------------------------------------------------------------
 
+
 class TestOsvHashQuery:
     def test_no_match_returns_empty_list(self):
         """An OSV response with empty vulns array should return []."""
@@ -68,6 +69,7 @@ class TestOsvHashQuery:
 # npm batch query
 # ---------------------------------------------------------------------------
 
+
 class TestNpmBatchQuery:
     def test_empty_package_list_returns_empty(self):
         assert _query_osv_packages_batch([]) == []
@@ -75,7 +77,7 @@ class TestNpmBatchQuery:
     def test_batch_response_parsed(self):
         """OSV batch query result format: {results: [{vulns: [...]}, ...]}"""
         packages = [
-            {"name": "left-pad",  "version": "1.0.0", "ecosystem": "npm"},
+            {"name": "left-pad", "version": "1.0.0", "ecosystem": "npm"},
             {"name": "is-promise", "version": "2.0.0", "ecosystem": "npm"},
         ]
 
@@ -83,31 +85,36 @@ class TestNpmBatchQuery:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "results": [
-                {"vulns": [{"id": "CVE-2024-1234"}]},   # left-pad has 1 CVE
-                {"vulns": []},                           # is-promise is clean
+                {"vulns": [{"id": "CVE-2024-1234"}]},  # left-pad has 1 CVE
+                {"vulns": []},  # is-promise is clean
             ]
         }
         with patch("osv_lookup.requests.post", return_value=mock_response):
             result = _query_osv_packages_batch(packages)
             assert len(result) == 1
             assert result[0]["id"] == "CVE-2024-1234"
-            assert result[0]["_package"] == "left-pad"   # Annotated with pkg name
+            assert result[0]["_package"] == "left-pad"  # Annotated with pkg name
 
 
 # ---------------------------------------------------------------------------
 # ZIP content scanning
 # ---------------------------------------------------------------------------
 
+
 class TestZipScanning:
     def test_finds_npm_dependencies(self):
         """package.json deps should be extracted with cleaned version strings."""
-        zip_bytes = _make_zip({
-            "package.json": json.dumps({
-                "name": "ext",
-                "dependencies": {"lodash": "^4.17.21", "axios": "~1.0.0"},
-                "devDependencies": {"jest": "29.0.0"},
-            }),
-        })
+        zip_bytes = _make_zip(
+            {
+                "package.json": json.dumps(
+                    {
+                        "name": "ext",
+                        "dependencies": {"lodash": "^4.17.21", "axios": "~1.0.0"},
+                        "devDependencies": {"jest": "29.0.0"},
+                    }
+                ),
+            }
+        )
         npm_packages, _ = _scan_zip_contents(zip_bytes)
         names = [p["name"] for p in npm_packages]
         assert set(names) == {"lodash", "axios", "jest"}
@@ -118,22 +125,26 @@ class TestZipScanning:
 
     def test_finds_cdn_references_in_js(self):
         """JS files loading from cdn.jsdelivr.net etc. should be flagged."""
-        zip_bytes = _make_zip({
-            "background.js": (
-                'fetch("https://cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js");\n'
-                'import("https://unpkg.com/lodash@4");\n'
-            ),
-        })
+        zip_bytes = _make_zip(
+            {
+                "background.js": (
+                    'fetch("https://cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js");\n'
+                    'import("https://unpkg.com/lodash@4");\n'
+                ),
+            }
+        )
         _, cdn_refs = _scan_zip_contents(zip_bytes)
         assert any("jsdelivr" in r for r in cdn_refs)
         assert any("unpkg.com" in r for r in cdn_refs)
 
     def test_clean_zip_no_findings(self):
         """A ZIP with just an innocent manifest should produce no findings."""
-        zip_bytes = _make_zip({
-            "manifest.json": '{"name": "test"}',
-            "background.js": 'console.log("hello world");\n',
-        })
+        zip_bytes = _make_zip(
+            {
+                "manifest.json": '{"name": "test"}',
+                "background.js": 'console.log("hello world");\n',
+            }
+        )
         npm_packages, cdn_refs = _scan_zip_contents(zip_bytes)
         assert npm_packages == []
         assert cdn_refs == []
@@ -142,12 +153,13 @@ class TestZipScanning:
         """Broken package.json should not crash the scanner."""
         zip_bytes = _make_zip({"package.json": "this is not valid JSON"})
         npm_packages, _ = _scan_zip_contents(zip_bytes)
-        assert npm_packages == []   # Skipped silently
+        assert npm_packages == []  # Skipped silently
 
 
 # ---------------------------------------------------------------------------
 # End-to-end run_osv_checks
 # ---------------------------------------------------------------------------
+
 
 class TestRunOsvChecks:
     def test_no_zip_skips_hash_checks(self):
@@ -159,34 +171,44 @@ class TestRunOsvChecks:
         """A hash that matches an OSV record should heavily score the extension."""
         zip_bytes = _make_zip({"manifest.json": "{}"})
 
-        with patch("osv_lookup._query_osv_hash") as mock_hash, \
-             patch("osv_lookup._query_osv_packages_batch", return_value=[]):
+        with (
+            patch("osv_lookup._query_osv_hash") as mock_hash,
+            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+        ):
             mock_hash.return_value = [{"id": "MAL-2026-001"}]
             result = run_osv_checks(zip_bytes, {})
-            assert result["osv_score"] >= 20   # Hash match contributes >= 20
+            assert result["osv_score"] >= 20  # Hash match contributes >= 20
             assert "MAL-2026-001" in str(result["flags"])
 
     def test_cdn_reference_adds_score(self):
         """JS loading from unpkg should add risk points."""
-        zip_bytes = _make_zip({
-            "background.js": 'fetch("https://unpkg.com/evil-pkg@1.0.0");',
-        })
-        with patch("osv_lookup._query_osv_hash", return_value=[]), \
-             patch("osv_lookup._query_osv_packages_batch", return_value=[]):
+        zip_bytes = _make_zip(
+            {
+                "background.js": 'fetch("https://unpkg.com/evil-pkg@1.0.0");',
+            }
+        )
+        with (
+            patch("osv_lookup._query_osv_hash", return_value=[]),
+            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+        ):
             result = run_osv_checks(zip_bytes, {})
             assert result["osv_score"] > 0
             assert any("unpkg.com" in flag for flag in result["flags"])
 
     def test_score_clamped_at_30(self):
         """The osv_score contribution must be capped at 30 (was 20 before VT)."""
-        zip_bytes = _make_zip({
-            "manifest.json": "{}",
-            "background.js": "\n".join(
-                f'fetch("https://unpkg.com/p{i}");' for i in range(20)
+        zip_bytes = _make_zip(
+            {
+                "manifest.json": "{}",
+                "background.js": "\n".join(f'fetch("https://unpkg.com/p{i}");' for i in range(20)),
+            }
+        )
+        with (
+            patch("osv_lookup._query_osv_hash", return_value=[{"id": "X"}] * 5),
+            patch(
+                "osv_lookup._query_osv_packages_batch",
+                return_value=[{"id": "Y", "_package": "p"}] * 5,
             ),
-        })
-        with patch("osv_lookup._query_osv_hash", return_value=[{"id": "X"}] * 5), \
-             patch("osv_lookup._query_osv_packages_batch",
-                   return_value=[{"id": "Y", "_package": "p"}] * 5):
+        ):
             result = run_osv_checks(zip_bytes, {})
             assert result["osv_score"] <= 30

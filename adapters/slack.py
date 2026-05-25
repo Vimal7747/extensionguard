@@ -23,18 +23,18 @@ log = get_logger(__name__)
 
 # Slack colours for the alert attachment sidebar stripe
 SEVERITY_COLOURS = {
-    "critical": "#FF0000",   # Red
-    "high":     "#FF6600",   # Orange
-    "medium":   "#FFB300",   # Amber
-    "low":      "#36A64F",   # Green
+    "critical": "#FF0000",  # Red
+    "high": "#FF6600",  # Orange
+    "medium": "#FFB300",  # Amber
+    "low": "#36A64F",  # Green
 }
 
 # Emoji prefix for the header — no Unicode box chars, just emoji which Slack handles fine
 SEVERITY_EMOJI = {
     "critical": ":rotating_light:",
-    "high":     ":warning:",
-    "medium":   ":mag:",
-    "low":      ":white_check_mark:",
+    "high": ":warning:",
+    "medium": ":mag:",
+    "low": ":white_check_mark:",
 }
 
 
@@ -48,9 +48,9 @@ def send(alert: dict, cfg: dict) -> dict:
 
     Returns {"ok": True} or {"ok": False, "error": "reason"}.
     """
-    webhook_url  = cfg["webhook_url"]
+    webhook_url = cfg["webhook_url"]
     min_severity = cfg.get("min_severity", "medium")
-    timeout      = cfg.get("timeout_sec", 10)
+    timeout = cfg.get("timeout_sec", 10)
 
     # Respect the minimum severity filter
     if not _severity_meets_minimum(alert.get("severity", "low"), min_severity):
@@ -60,8 +60,8 @@ def send(alert: dict, cfg: dict) -> dict:
 
     resp, err = post_with_retry(
         webhook_url,
-        json    = message,
-        timeout = timeout,
+        json=message,
+        timeout=timeout,
     )
 
     if err is not None:
@@ -82,21 +82,22 @@ def send(alert: dict, cfg: dict) -> dict:
 # Block Kit message builder
 # ---------------------------------------------------------------------------
 
+
 def _build_message(alert: dict, channel=None) -> dict:
     """Build a Slack Block Kit payload for the given alert."""
-    sev    = alert.get("severity", "low")
-    rule   = alert.get("rule", "?")
-    ext    = alert.get("extension", {})
+    sev = alert.get("severity", "low")
+    rule = alert.get("rule", "?")
+    ext = alert.get("extension", {})
     detail = alert.get("detail", {})
-    mitre  = alert.get("mitre", [])
-    ts     = alert.get("alert_time", _now_iso())
+    mitre = alert.get("mitre", [])
+    ts = alert.get("alert_time", _now_iso())
 
     ext_name = ext.get("title") or ext.get("id") or "Unknown Extension"
-    ext_id   = ext.get("id", "")
-    desc     = detail.get("description", "")
-    url      = detail.get("url", "")
-    colour   = SEVERITY_COLOURS.get(sev, "#808080")
-    emoji    = SEVERITY_EMOJI.get(sev, ":bell:")
+    ext_id = ext.get("id", "")
+    desc = detail.get("description", "")
+    url = detail.get("url", "")
+    colour = SEVERITY_COLOURS.get(sev, "#808080")
+    emoji = SEVERITY_EMOJI.get(sev, ":bell:")
     ts_short = ts[:19].replace("T", " ") + " UTC"
 
     # Header line
@@ -130,25 +131,31 @@ def _build_message(alert: dict, channel=None) -> dict:
 
     # Suspicious URL (only if present)
     if url:
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": f"*Suspicious URL:*\n`{url}`"},
-        })
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Suspicious URL:*\n`{url}`"},
+            }
+        )
 
     # Fields row (extension name, MITRE, time)
-    blocks.append({
-        "type": "section",
-        "fields": fields,
-    })
+    blocks.append(
+        {
+            "type": "section",
+            "fields": fields,
+        }
+    )
 
     # Recommendation footer
     rec = _severity_recommendation(sev)
-    blocks.append({
-        "type": "context",
-        "elements": [
-            {"type": "mrkdwn", "text": f":information_source: *Recommendation:* {rec}"}
-        ],
-    })
+    blocks.append(
+        {
+            "type": "context",
+            "elements": [
+                {"type": "mrkdwn", "text": f":information_source: *Recommendation:* {rec}"}
+            ],
+        }
+    )
 
     # Slack attachment for the colour stripe — attachments are "legacy" but
     # the colour side-stripe still only works via attachments, not blocks
@@ -156,7 +163,7 @@ def _build_message(alert: dict, channel=None) -> dict:
         "text": f"ExtensionGuard Alert: {sev.upper()} - {rule} on {ext_name}",
         "attachments": [
             {
-                "color":  colour,
+                "color": colour,
                 "blocks": blocks,
             }
         ],
@@ -171,9 +178,9 @@ def _build_message(alert: dict, channel=None) -> dict:
 def _severity_recommendation(sev: str) -> str:
     return {
         "critical": "BLOCK IMMEDIATELY - initiate remediation playbook",
-        "high":     "QUARANTINE - escalate to Tier-2 analyst",
-        "medium":   "REVIEW - monitor for additional suspicious behaviour",
-        "low":      "LOW RISK - continue standard monitoring",
+        "high": "QUARANTINE - escalate to Tier-2 analyst",
+        "medium": "REVIEW - monitor for additional suspicious behaviour",
+        "low": "LOW RISK - continue standard monitoring",
     }.get(sev, "Review and triage")
 
 

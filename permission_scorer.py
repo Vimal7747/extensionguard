@@ -21,47 +21,38 @@ from models import ManifestInfo, PermissionScore
 # ---------------------------------------------------------------------------
 
 PERMISSION_WEIGHTS: dict = {
-
     # ---- Critical (35 pts) ------------------------------------------------
     # debugger: attach a JS debugger to ANY tab → full memory read, CSP bypass,
     #           extract credentials from in-memory React/Angular state
-    "debugger":            35,
-
+    "debugger": 35,
     # nativeMessaging: spawn a native OS process → complete host compromise,
     #                  used by Shai-Hulud for persistence after browser restart
-    "nativeMessaging":     35,
-
+    "nativeMessaging": 35,
     # ---- High (20 pts) ----------------------------------------------------
     # webRequestBlocking: intercept AND modify HTTP/S responses mid-flight
-    "webRequestBlocking":  20,
-
+    "webRequestBlocking": 20,
     # cookies: read session cookies for any domain the host_permissions cover
     #          TeamPCP primary TTP - used to harvest github.com / npm tokens
-    "cookies":             20,
-
+    "cookies": 20,
     # browsingData: clear history, cookies, cache - used to cover exfil tracks
-    "browsingData":        20,
-
+    "browsingData": 20,
     # management: enable/disable/uninstall other extensions
     #             can silence EDR or security extensions
-    "management":          20,
-
+    "management": 20,
     # proxy: reroute ALL browser traffic through attacker-controlled proxy
-    "proxy":               20,
-
+    "proxy": 20,
     # ---- Medium (12 pts) --------------------------------------------------
-    "webRequest":          12,   # Inspect (but not modify) all requests
-    "tabs":                12,   # Read URLs + titles of every open tab
-    "history":             12,   # Full browsing history access
-    "clipboardRead":       12,   # Clipboard sniffing (passwords copy-pasted)
-    "identity":            12,   # Fetch OAuth2 tokens for the signed-in user
-
+    "webRequest": 12,  # Inspect (but not modify) all requests
+    "tabs": 12,  # Read URLs + titles of every open tab
+    "history": 12,  # Full browsing history access
+    "clipboardRead": 12,  # Clipboard sniffing (passwords copy-pasted)
+    "identity": 12,  # Fetch OAuth2 tokens for the signed-in user
     # ---- Low (5 pts) ------------------------------------------------------
-    "storage":              5,   # Browser local/sync storage (exfil staging)
-    "downloads":            5,   # Initiate or intercept downloads
-    "bookmarks":            3,
-    "notifications":        2,
-    "contextMenus":         1,
+    "storage": 5,  # Browser local/sync storage (exfil staging)
+    "downloads": 5,  # Initiate or intercept downloads
+    "bookmarks": 3,
+    "notifications": 2,
+    "contextMenus": 1,
 }
 
 # URL patterns that grant access to ALL sites - the key exfil enabler
@@ -78,7 +69,7 @@ HIGH_VALUE_HOST_PATTERNS = [
     "*://github.com/*",
     "*://*.npmjs.com/*",
     "*://*.atlassian.net/*",
-    "*://*.google.com/*",   # Google auth cookies
+    "*://*.google.com/*",  # Google auth cookies
     "*://*.gitlab.com/*",
 ]
 
@@ -89,29 +80,31 @@ HIGH_VALUE_HOST_PATTERNS = [
 
 COMBO_BONUSES = [
     # Session token harvesting - TeamPCP's exact permission profile
-    ({"cookies", "tabs", "storage"},
-     15,
-     "Session token harvesting combo - matches TeamPCP TTP (T1555.003)"),
-
+    (
+        {"cookies", "tabs", "storage"},
+        15,
+        "Session token harvesting combo - matches TeamPCP TTP (T1555.003)",
+    ),
     # Full traffic interception pipeline
-    ({"webRequest", "cookies"},
-     10,
-     "Traffic intercept + cookie theft pipeline (T1071 + T1555)"),
-
+    ({"webRequest", "cookies"}, 10, "Traffic intercept + cookie theft pipeline (T1071 + T1555)"),
     # Silent extension management - disable security tools
-    ({"management", "storage"},
-     10,
-     "Extension management abuse - can disable EDR/security extensions (T1176)"),
-
+    (
+        {"management", "storage"},
+        10,
+        "Extension management abuse - can disable EDR/security extensions (T1176)",
+    ),
     # Debugger-assisted credential extraction - Shai-Hulud signature
-    ({"debugger", "tabs"},
-     20,
-     "Debugger + tabs = in-memory credential extraction (T1555 via T1059.007)"),
-
+    (
+        {"debugger", "tabs"},
+        20,
+        "Debugger + tabs = in-memory credential extraction (T1555 via T1059.007)",
+    ),
     # Proxy + broad access = full MITM
-    ({"proxy", "webRequest"},
-     15,
-     "Proxy control + request inspection = full MITM capability (T1071)"),
+    (
+        {"proxy", "webRequest"},
+        15,
+        "Proxy control + request inspection = full MITM capability (T1071)",
+    ),
 ]
 
 
@@ -130,11 +123,11 @@ def score_permissions(manifest: ManifestInfo) -> PermissionScore:
     Returns a PermissionScore with a 0–100 total and analyst notes.
     """
     breakdown: dict = {}
-    notes:     list = []
-    flagged:   list = []
+    notes: list = []
+    flagged: list = []
 
     # Combine all permissions into one set for easy membership checks
-    all_perms    = set(manifest.permissions)
+    all_perms = set(manifest.permissions)
     all_patterns = set(manifest.host_permissions)
 
     # --- Layer 1: Named API permissions ------------------------------------
@@ -161,12 +154,10 @@ def score_permissions(manifest: ManifestInfo) -> PermissionScore:
     # --- Layer 3: High-value targets ----------------------------------------
     hv_matches = [p for p in all_patterns if p in HIGH_VALUE_HOST_PATTERNS]
     if hv_matches:
-        points = min(len(hv_matches) * 5, 20)   # cap at 20 pts
+        points = min(len(hv_matches) * 5, 20)  # cap at 20 pts
         breakdown["high_value_hosts"] = points
         flagged += hv_matches
-        notes.append(
-            f"High-value targets in host_permissions: {', '.join(hv_matches)}"
-        )
+        notes.append(f"High-value targets in host_permissions: {', '.join(hv_matches)}")
 
     # --- Layer 4: Dangerous combos -----------------------------------------
     for required, bonus, description in COMBO_BONUSES:
@@ -200,11 +191,11 @@ def score_permissions(manifest: ManifestInfo) -> PermissionScore:
     total = max(0, min(100, total))
 
     return PermissionScore(
-        total_score         = total,
-        risk_level          = _score_to_level(total),
-        flagged_permissions = flagged,
-        breakdown           = breakdown,
-        notes               = notes,
+        total_score=total,
+        risk_level=_score_to_level(total),
+        flagged_permissions=flagged,
+        breakdown=breakdown,
+        notes=notes,
     )
 
 

@@ -20,6 +20,7 @@ from publisher_checker import (
 # Extension ID computation
 # ---------------------------------------------------------------------------
 
+
 class TestExtensionId:
     """Chrome's algorithm: SHA-256 first 16 bytes -> hex -> map each digit a-p."""
 
@@ -29,11 +30,11 @@ class TestExtensionId:
         so a typo in the expected string can't make this test wrong."""
         result = _compute_extension_id(b"")
         empty_sha = hashlib.sha256(b"").digest()[:16].hex()
-        expected = "".join(chr(ord('a') + int(c, 16)) for c in empty_sha)
+        expected = "".join(chr(ord("a") + int(c, 16)) for c in empty_sha)
         assert result == expected
         # And sanity-check the format
         assert len(result) == 32
-        assert all('a' <= c <= 'p' for c in result)
+        assert all("a" <= c <= "p" for c in result)
 
     def test_length_is_32_chars(self):
         """Extension IDs are always exactly 32 lowercase letters."""
@@ -41,7 +42,7 @@ class TestExtensionId:
             ext_id = _compute_extension_id(raw)
             assert len(ext_id) == 32
             assert ext_id.islower()
-            assert all('a' <= c <= 'p' for c in ext_id)
+            assert all("a" <= c <= "p" for c in ext_id)
 
     def test_deterministic(self):
         """Same key bytes must always produce the same extension ID."""
@@ -52,6 +53,7 @@ class TestExtensionId:
 # ---------------------------------------------------------------------------
 # update_url validation
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateUrlValidation:
     def test_official_cws_url_passes(self, benign_manifest_raw):
@@ -68,38 +70,44 @@ class TestUpdateUrlValidation:
         assert any("workers.dev" in f.lower() for f in result["flags"])
 
     def test_ngrok_url_flagged(self):
-        manifest = _build_manifest_info({
-            "manifest_version": 3,
-            "name": "Test",
-            "version": "1.0",
-            "permissions": [],
-            "update_url": "https://abc123.ngrok.io/updates",
-        })
+        manifest = _build_manifest_info(
+            {
+                "manifest_version": 3,
+                "name": "Test",
+                "version": "1.0",
+                "permissions": [],
+                "update_url": "https://abc123.ngrok.io/updates",
+            }
+        )
         result = check_publisher(manifest, query_cws=False)
         assert result["suspicious_update"] is True
         assert any("ngrok" in f.lower() for f in result["flags"])
 
     def test_self_hosted_url_flagged(self):
         """Any non-CWS URL should be flagged (even if not on our pattern list)."""
-        manifest = _build_manifest_info({
-            "manifest_version": 3,
-            "name": "Test",
-            "version": "1.0",
-            "permissions": [],
-            "update_url": "https://my-corp.example.com/chrome/updates",
-        })
+        manifest = _build_manifest_info(
+            {
+                "manifest_version": 3,
+                "name": "Test",
+                "version": "1.0",
+                "permissions": [],
+                "update_url": "https://my-corp.example.com/chrome/updates",
+            }
+        )
         result = check_publisher(manifest, query_cws=False)
         assert result["update_url_ok"] is False
         assert any("Non-standard" in f for f in result["flags"])
 
     def test_no_update_url_does_not_flag(self):
         """Sideloaded extensions often have no update_url - shouldn't flag."""
-        manifest = _build_manifest_info({
-            "manifest_version": 3,
-            "name": "Test",
-            "version": "1.0",
-            "permissions": [],
-        })
+        manifest = _build_manifest_info(
+            {
+                "manifest_version": 3,
+                "name": "Test",
+                "version": "1.0",
+                "permissions": [],
+            }
+        )
         result = check_publisher(manifest, query_cws=False)
         # No update_url AND no key = sideloaded - should not flag for update_url
         assert result["update_url_ok"] is True
@@ -109,18 +117,21 @@ class TestUpdateUrlValidation:
 # Key extraction
 # ---------------------------------------------------------------------------
 
+
 class TestKeyExtraction:
     def test_extracts_key_from_manifest_key_field(self):
         """If manifest has a 'key' field, use that directly."""
         fake_key_bytes = b"fake-key-data-for-testing-12345"
         key_b64 = base64.b64encode(fake_key_bytes).decode()
-        manifest = _build_manifest_info({
-            "manifest_version": 3,
-            "name": "HasKey",
-            "version": "1.0",
-            "permissions": [],
-            "key": key_b64,
-        })
+        manifest = _build_manifest_info(
+            {
+                "manifest_version": 3,
+                "name": "HasKey",
+                "version": "1.0",
+                "permissions": [],
+                "key": key_b64,
+            }
+        )
         result = check_publisher(manifest, query_cws=False)
         assert result["extension_id"] == _compute_extension_id(fake_key_bytes)
 
@@ -135,6 +146,7 @@ class TestKeyExtraction:
 # ---------------------------------------------------------------------------
 # Minimal protobuf parser
 # ---------------------------------------------------------------------------
+
 
 class TestProtobufParser:
     """The hand-rolled protobuf decoder used to extract keys from CRX3 headers."""
@@ -177,6 +189,7 @@ class TestProtobufParser:
 # CWS query (mocked HTTP)
 # ---------------------------------------------------------------------------
 
+
 class TestCwsQuery:
     """Live CWS calls are mocked - we only test our request/response handling."""
 
@@ -204,7 +217,9 @@ class TestCwsQuery:
         """'noupdate' status means the extension exists but is up-to-date."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.text = '<gupdate><app appid="x"><updatecheck status="noupdate"/></app></gupdate>'
+        mock_response.text = (
+            '<gupdate><app appid="x"><updatecheck status="noupdate"/></app></gupdate>'
+        )
         with patch("publisher_checker.requests.get", return_value=mock_response):
             result = _query_cws("x")
             assert result["exists"] is True

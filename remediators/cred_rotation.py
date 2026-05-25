@@ -38,15 +38,15 @@ from datetime import datetime, timezone
 
 CREDENTIAL_PLAYBOOKS = {
     "github": {
-        "host_patterns":     ["github.com", "*.github.com", "api.github.com"],
-        "credential_types":  ["PAT", "SSH key", "OAuth app token", "Codespaces secrets"],
-        "severity":          "critical",
+        "host_patterns": ["github.com", "*.github.com", "api.github.com"],
+        "credential_types": ["PAT", "SSH key", "OAuth app token", "Codespaces secrets"],
+        "severity": "critical",
         "time_estimate_min": 25,
         "steps": [
             {
-                "step":   1,
-                "title":  "Revoke all Personal Access Tokens (PATs)",
-                "why":    "PATs grant API access to repos, packages, and Actions. Most session-cookie theft also captures these.",
+                "step": 1,
+                "title": "Revoke all Personal Access Tokens (PATs)",
+                "why": "PATs grant API access to repos, packages, and Actions. Most session-cookie theft also captures these.",
                 "how": [
                     "Open https://github.com/settings/tokens",
                     "Click 'Revoke all' (or revoke each token individually)",
@@ -56,9 +56,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "automation_api": "DELETE https://api.github.com/applications/{client_id}/grant",
             },
             {
-                "step":   2,
-                "title":  "Rotate SSH keys",
-                "why":    "Browser session sometimes provides admin access to add/replace SSH keys via the web UI.",
+                "step": 2,
+                "title": "Rotate SSH keys",
+                "why": "Browser session sometimes provides admin access to add/replace SSH keys via the web UI.",
                 "how": [
                     "On your local machine: ssh-keygen -t ed25519 -C 'rotated-<date>'",
                     "Open https://github.com/settings/keys",
@@ -68,9 +68,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "git push to a known-good test repo  -> succeeds with new key only",
             },
             {
-                "step":   3,
-                "title":  "Audit and revoke OAuth app authorisations",
-                "why":    "OAuth tokens are session-independent and persist after browser logout.",
+                "step": 3,
+                "title": "Audit and revoke OAuth app authorisations",
+                "why": "OAuth tokens are session-independent and persist after browser logout.",
                 "how": [
                     "Open https://github.com/settings/applications",
                     "Review the 'Authorized OAuth Apps' list",
@@ -79,9 +79,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "Re-check the same page  -> only approved apps remain",
             },
             {
-                "step":   4,
-                "title":  "Rotate Codespaces and Actions secrets",
-                "why":    "Repository secrets exposed via web session can be read by the attacker through copy-on-create.",
+                "step": 4,
+                "title": "Rotate Codespaces and Actions secrets",
+                "why": "Repository secrets exposed via web session can be read by the attacker through copy-on-create.",
                 "how": [
                     "For each repository: Settings > Secrets and variables > Actions",
                     "Rotate every secret (note: GitHub does not display existing values, but assume compromised)",
@@ -90,9 +90,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "Trigger a CI run that uses the secret  -> succeeds",
             },
             {
-                "step":   5,
-                "title":  "Sign out of all sessions globally",
-                "why":    "The stolen session cookies will remain valid until explicitly invalidated.",
+                "step": 5,
+                "title": "Sign out of all sessions globally",
+                "why": "The stolen session cookies will remain valid until explicitly invalidated.",
                 "how": [
                     "Open https://github.com/settings/security",
                     "Click 'Sign out of all other sessions'",
@@ -102,17 +102,16 @@ CREDENTIAL_PLAYBOOKS = {
             },
         ],
     },
-
     "npm": {
-        "host_patterns":     ["npmjs.com", "*.npmjs.com", "registry.npmjs.org"],
-        "credential_types":  ["auth token", "automation token", "publish access"],
-        "severity":          "critical",
+        "host_patterns": ["npmjs.com", "*.npmjs.com", "registry.npmjs.org"],
+        "credential_types": ["auth token", "automation token", "publish access"],
+        "severity": "critical",
         "time_estimate_min": 15,
         "steps": [
             {
-                "step":   1,
-                "title":  "Revoke all npm access tokens",
-                "why":    "An npm token with publish rights enables supply-chain injection into your downstream packages.",
+                "step": 1,
+                "title": "Revoke all npm access tokens",
+                "why": "An npm token with publish rights enables supply-chain injection into your downstream packages.",
                 "how": [
                     "Open https://www.npmjs.com/settings/<your-user>/tokens",
                     "Delete every token (or only Publish/Automation tokens if you must keep Read-only ones)",
@@ -121,9 +120,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "npm whoami --registry https://registry.npmjs.org/  using the old token  -> expect 401",
             },
             {
-                "step":   2,
-                "title":  "Audit recent publishes",
-                "why":    "Detect whether the attacker already pushed a malicious version of your packages.",
+                "step": 2,
+                "title": "Audit recent publishes",
+                "why": "Detect whether the attacker already pushed a malicious version of your packages.",
                 "how": [
                     "For each package you maintain: npm view <pkg> versions --json",
                     "Compare the latest version + dist-tag against your CI publish history",
@@ -132,9 +131,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "Confirm only versions you knowingly published are present",
             },
             {
-                "step":   3,
-                "title":  "Generate new automation tokens",
-                "why":    "CI/CD pipelines that publish to npm need fresh credentials.",
+                "step": 3,
+                "title": "Generate new automation tokens",
+                "why": "CI/CD pipelines that publish to npm need fresh credentials.",
                 "how": [
                     "https://www.npmjs.com/settings/<your-user>/tokens > Generate New Token > Automation",
                     "Update the token in: GitHub Actions secrets / GitLab CI variables / etc.",
@@ -144,17 +143,16 @@ CREDENTIAL_PLAYBOOKS = {
             },
         ],
     },
-
     "aws": {
-        "host_patterns":     ["*.aws.amazon.com", "*.amazonaws.com", "console.aws.amazon.com"],
-        "credential_types":  ["IAM access key", "session token", "console session"],
-        "severity":          "critical",
+        "host_patterns": ["*.aws.amazon.com", "*.amazonaws.com", "console.aws.amazon.com"],
+        "credential_types": ["IAM access key", "session token", "console session"],
+        "severity": "critical",
         "time_estimate_min": 30,
         "steps": [
             {
-                "step":   1,
-                "title":  "Rotate IAM access keys for the affected user",
-                "why":    "Browser console sessions can leak short-lived session credentials. Long-lived IAM keys may also be present in browser storage if the user pasted them.",
+                "step": 1,
+                "title": "Rotate IAM access keys for the affected user",
+                "why": "Browser console sessions can leak short-lived session credentials. Long-lived IAM keys may also be present in browser storage if the user pasted them.",
                 "how": [
                     "Identify the affected IAM user: who was logged in when the extension was active?",
                     "aws iam list-access-keys --user-name <user>",
@@ -166,9 +164,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "aws sts get-caller-identity  with old key  -> expect AccessDenied after Inactive",
             },
             {
-                "step":   2,
-                "title":  "Force re-authentication of all console sessions",
-                "why":    "Active console sessions remain valid until expiry. Session token theft = full account access.",
+                "step": 2,
+                "title": "Force re-authentication of all console sessions",
+                "why": "Active console sessions remain valid until expiry. Session token theft = full account access.",
                 "how": [
                     "IAM > Users > <affected user> > Security credentials > 'Deactivate' and re-create the console password",
                     "Or use AWS Organizations + SCP to require re-MFA across all sessions",
@@ -176,9 +174,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "Have the user re-login  -> prompted for new password + MFA",
             },
             {
-                "step":   3,
-                "title":  "Review CloudTrail for unauthorised API calls",
-                "why":    "Confirm whether the attacker actually used the harvested credentials before rotation.",
+                "step": 3,
+                "title": "Review CloudTrail for unauthorised API calls",
+                "why": "Confirm whether the attacker actually used the harvested credentials before rotation.",
                 "how": [
                     "Open CloudTrail > Event history",
                     "Filter:  Event source = signin.amazonaws.com  or  source IP NOT in your corporate ranges",
@@ -189,17 +187,16 @@ CREDENTIAL_PLAYBOOKS = {
             },
         ],
     },
-
     "slack": {
-        "host_patterns":     ["*.slack.com", "slack.com"],
-        "credential_types":  ["user token", "bot token", "incoming webhook"],
-        "severity":          "high",
+        "host_patterns": ["*.slack.com", "slack.com"],
+        "credential_types": ["user token", "bot token", "incoming webhook"],
+        "severity": "high",
         "time_estimate_min": 10,
         "steps": [
             {
-                "step":   1,
-                "title":  "Sign out of all Slack sessions",
-                "why":    "Slack session tokens give DM read access and can post as the user.",
+                "step": 1,
+                "title": "Sign out of all Slack sessions",
+                "why": "Slack session tokens give DM read access and can post as the user.",
                 "how": [
                     "Slack > Profile > Account settings > Sign out all other sessions",
                     "Optionally: workspace admin can force-sign-out via Admin > Members > 'Force sign out'",
@@ -207,9 +204,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "Other devices show Slack as signed out",
             },
             {
-                "step":   2,
-                "title":  "Rotate any compromised Slack app tokens",
-                "why":    "If the user is a Slack app developer, their bot/user tokens may have been exfiltrated.",
+                "step": 2,
+                "title": "Rotate any compromised Slack app tokens",
+                "why": "If the user is a Slack app developer, their bot/user tokens may have been exfiltrated.",
                 "how": [
                     "Open https://api.slack.com/apps",
                     "For each app: OAuth & Permissions > Revoke Token",
@@ -219,17 +216,16 @@ CREDENTIAL_PLAYBOOKS = {
             },
         ],
     },
-
     "atlassian": {
-        "host_patterns":     ["*.atlassian.net", "*.atlassian.com"],
-        "credential_types":  ["API token", "OAuth", "session"],
-        "severity":          "high",
+        "host_patterns": ["*.atlassian.net", "*.atlassian.com"],
+        "credential_types": ["API token", "OAuth", "session"],
+        "severity": "high",
         "time_estimate_min": 10,
         "steps": [
             {
-                "step":   1,
-                "title":  "Revoke all Atlassian API tokens",
-                "why":    "Atlassian API tokens persist independently of browser sessions. They allow full Jira/Confluence read+write.",
+                "step": 1,
+                "title": "Revoke all Atlassian API tokens",
+                "why": "Atlassian API tokens persist independently of browser sessions. They allow full Jira/Confluence read+write.",
                 "how": [
                     "Open https://id.atlassian.com/manage-profile/security/api-tokens",
                     "Click Revoke next to each token",
@@ -239,17 +235,16 @@ CREDENTIAL_PLAYBOOKS = {
             },
         ],
     },
-
     "google": {
-        "host_patterns":     ["*.google.com", "accounts.google.com", "*.googleapis.com"],
-        "credential_types":  ["OAuth token", "app password", "session"],
-        "severity":          "high",
+        "host_patterns": ["*.google.com", "accounts.google.com", "*.googleapis.com"],
+        "credential_types": ["OAuth token", "app password", "session"],
+        "severity": "high",
         "time_estimate_min": 15,
         "steps": [
             {
-                "step":   1,
-                "title":  "Sign out of all Google sessions",
-                "why":    "Google session cookies grant Gmail read, Drive access, Workspace admin (if applicable).",
+                "step": 1,
+                "title": "Sign out of all Google sessions",
+                "why": "Google session cookies grant Gmail read, Drive access, Workspace admin (if applicable).",
                 "how": [
                     "Open https://myaccount.google.com/security",
                     "Under 'Your devices' click 'Manage all devices'",
@@ -258,9 +253,9 @@ CREDENTIAL_PLAYBOOKS = {
                 "verify": "Other devices show Google as signed out",
             },
             {
-                "step":   2,
-                "title":  "Revoke third-party app access",
-                "why":    "OAuth tokens for connected apps survive password rotation.",
+                "step": 2,
+                "title": "Revoke third-party app access",
+                "why": "OAuth tokens for connected apps survive password rotation.",
                 "how": [
                     "Open https://myaccount.google.com/permissions",
                     "Review the list of connected apps",
@@ -277,12 +272,13 @@ CREDENTIAL_PLAYBOOKS = {
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def generate_playbook(
     host_permissions: list,
-    iocs:             list | None = None,
-    extension_name:   str = "Unknown",
-    case_id:          str | None = None,
-    output_format:    str = "markdown",
+    iocs: list | None = None,
+    extension_name: str = "Unknown",
+    case_id: str | None = None,
+    output_format: str = "markdown",
 ) -> dict:
     """
     Generate a tailored credential rotation playbook.
@@ -310,48 +306,48 @@ def generate_playbook(
 
     if not applicable_keys:
         return {
-            "ok":             True,
-            "applicable":     [],
-            "total_steps":    0,
+            "ok": True,
+            "applicable": [],
+            "total_steps": 0,
             "total_time_min": 0,
-            "markdown":       "# No credential rotation required\n\nThis extension's permissions don't map to any tracked credential store.\n",
-            "json":           {"applicable": [], "steps": []},
-            "severity":       "low",
+            "markdown": "# No credential rotation required\n\nThis extension's permissions don't map to any tracked credential store.\n",
+            "json": {"applicable": [], "steps": []},
+            "severity": "low",
         }
 
     # Pull out the relevant playbook entries
     playbooks = {k: CREDENTIAL_PLAYBOOKS[k] for k in applicable_keys}
 
-    total_steps    = sum(len(p["steps"]) for p in playbooks.values())
+    total_steps = sum(len(p["steps"]) for p in playbooks.values())
     total_time_min = sum(p.get("time_estimate_min", 0) for p in playbooks.values())
 
     # Compute worst severity across all applicable stores
     severities = [p.get("severity", "medium") for p in playbooks.values()]
-    severity   = _max_severity(severities)
+    severity = _max_severity(severities)
 
     result = {
-        "ok":             True,
-        "applicable":     applicable_keys,
-        "total_steps":    total_steps,
+        "ok": True,
+        "applicable": applicable_keys,
+        "total_steps": total_steps,
         "total_time_min": total_time_min,
-        "severity":       severity,
+        "severity": severity,
     }
 
     if output_format in ("markdown", "both"):
         result["markdown"] = _render_markdown(
-            playbooks       = playbooks,
-            extension_name  = extension_name,
-            case_id         = case_id,
-            iocs            = iocs,
-            total_time_min  = total_time_min,
+            playbooks=playbooks,
+            extension_name=extension_name,
+            case_id=case_id,
+            iocs=iocs,
+            total_time_min=total_time_min,
         )
 
     if output_format in ("json", "both"):
         result["json"] = _render_json(
-            playbooks      = playbooks,
-            extension_name = extension_name,
-            case_id        = case_id,
-            iocs           = iocs,
+            playbooks=playbooks,
+            extension_name=extension_name,
+            case_id=case_id,
+            iocs=iocs,
         )
 
     return result
@@ -363,7 +359,8 @@ def save_playbook(playbook: dict, output_dir: str, prefix: str = "rotation") -> 
     Returns the paths written.
     """
     from pathlib import Path
-    out  = Path(output_dir)
+
+    out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     paths = {}
 
@@ -384,6 +381,7 @@ def save_playbook(playbook: dict, output_dir: str, prefix: str = "rotation") -> 
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _detect_applicable_stores(host_permissions: list, iocs: list) -> list:
     """
     Match the extension's host_permissions and IOC strings against the
@@ -396,8 +394,7 @@ def _detect_applicable_stores(host_permissions: list, iocs: list) -> list:
 
     # Treat <all_urls> as a wildcard match for ALL stores (worst case)
     all_urls = any(
-        p in ("<all_urls>", "*://*/*", "https://*/*", "http://*/*")
-        for p in host_permissions
+        p in ("<all_urls>", "*://*/*", "https://*/*", "http://*/*") for p in host_permissions
     )
 
     for store_key, store in CREDENTIAL_PLAYBOOKS.items():
@@ -427,9 +424,9 @@ def _detect_applicable_stores(host_permissions: list, iocs: list) -> list:
     unique = [x for x in matches if not (x in seen or seen.add(x))]
 
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    unique.sort(key=lambda k: severity_order.get(
-        CREDENTIAL_PLAYBOOKS[k].get("severity", "medium"), 99
-    ))
+    unique.sort(
+        key=lambda k: severity_order.get(CREDENTIAL_PLAYBOOKS[k].get("severity", "medium"), 99)
+    )
 
     return unique
 
@@ -487,10 +484,10 @@ def _max_severity(severities: list) -> str:
 
 
 def _render_markdown(
-    playbooks:      dict,
+    playbooks: dict,
     extension_name: str,
-    case_id:        str | None,
-    iocs:           list,
+    case_id: str | None,
+    iocs: list,
     total_time_min: int,
 ) -> str:
     """Render the playbook as a Markdown document for the IR runbook."""
@@ -558,23 +555,23 @@ def _render_markdown(
 
 
 def _render_json(
-    playbooks:      dict,
+    playbooks: dict,
     extension_name: str,
-    case_id:        str | None,
-    iocs:           list,
+    case_id: str | None,
+    iocs: list,
 ) -> dict:
     """Render the playbook as a structured JSON dict for ticketing systems."""
     return {
-        "generated_at":   datetime.now(timezone.utc).isoformat(),
-        "case_id":        case_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "case_id": case_id,
         "extension_name": extension_name,
-        "iocs":           iocs,
+        "iocs": iocs,
         "stores": {
             key: {
-                "severity":         store.get("severity"),
+                "severity": store.get("severity"),
                 "time_estimate_min": store.get("time_estimate_min"),
                 "credential_types": store["credential_types"],
-                "steps":            store["steps"],
+                "steps": store["steps"],
             }
             for key, store in playbooks.items()
         },

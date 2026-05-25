@@ -26,9 +26,9 @@ import subprocess
 from pathlib import Path
 
 # Chrome enterprise policy paths (per platform)
-WINDOWS_POLICY_KEY  = r"Software\Policies\Google\Chrome\ExtensionInstallBlocklist"
-LINUX_POLICY_DIR    = Path("/etc/opt/chrome/policies/managed")
-LINUX_POLICY_FILE   = LINUX_POLICY_DIR / "extguard_blocklist.json"
+WINDOWS_POLICY_KEY = r"Software\Policies\Google\Chrome\ExtensionInstallBlocklist"
+LINUX_POLICY_DIR = Path("/etc/opt/chrome/policies/managed")
+LINUX_POLICY_FILE = LINUX_POLICY_DIR / "extguard_blocklist.json"
 MACOS_POLICY_DOMAIN = "com.google.Chrome"
 
 
@@ -59,15 +59,16 @@ def block_extension(extension_id: str, dry_run: bool = False) -> dict:
         return block_extension_linux(extension_id, dry_run)
     else:
         return {
-            "ok":       False,
+            "ok": False,
             "platform": system,
-            "error":    f"Unsupported platform: {system}",
+            "error": f"Unsupported platform: {system}",
         }
 
 
 # ---------------------------------------------------------------------------
 # Windows: HKLM registry via winreg
 # ---------------------------------------------------------------------------
+
 
 def block_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
     """
@@ -82,12 +83,12 @@ def block_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
     Requires the script to be running as Administrator.
     """
     result = {
-        "ok":       False,
+        "ok": False,
         "platform": "windows",
-        "method":   "registry",
-        "details":  {
+        "method": "registry",
+        "details": {
             "registry_path": f"HKLM\\{WINDOWS_POLICY_KEY}",
-            "extension_id":  extension_id,
+            "extension_id": extension_id,
         },
     }
 
@@ -95,8 +96,7 @@ def block_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
         result["ok"] = True
         result["details"]["dry_run"] = True
         result["details"]["note"] = (
-            f"Would write extension ID '{extension_id}' to "
-            f"HKLM\\{WINDOWS_POLICY_KEY}"
+            f"Would write extension ID '{extension_id}' to HKLM\\{WINDOWS_POLICY_KEY}"
         )
         return result
 
@@ -118,7 +118,7 @@ def block_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
             winreg.CloseKey(key)
             result["ok"] = True
             result["details"]["already_blocked"] = True
-            result["details"]["slot"]            = existing_slot
+            result["details"]["slot"] = existing_slot
             return result
 
         # Find next available numbered slot (Chrome expects 1, 2, 3, ...)
@@ -133,8 +133,7 @@ def block_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
 
     except PermissionError:
         result["error"] = (
-            "Access denied writing to HKLM. "
-            "Re-run the remediation tool as Administrator."
+            "Access denied writing to HKLM. Re-run the remediation tool as Administrator."
         )
     except OSError as exc:
         result["error"] = f"Registry write failed: {exc}"
@@ -145,6 +144,7 @@ def block_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
 def _find_next_free_slot(key) -> int:
     """Find the smallest unused numbered slot in the blocklist key."""
     import winreg
+
     slot = 1
     while True:
         try:
@@ -157,6 +157,7 @@ def _find_next_free_slot(key) -> int:
 def _find_existing_slot(key, extension_id: str):
     """Return the slot number if extension_id is already in the blocklist, else None."""
     import winreg
+
     slot = 1
     while True:
         try:
@@ -174,10 +175,10 @@ def unblock_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
     Useful for false positive recovery.
     """
     result = {
-        "ok":       False,
+        "ok": False,
         "platform": "windows",
-        "method":   "registry",
-        "details":  {"extension_id": extension_id},
+        "method": "registry",
+        "details": {"extension_id": extension_id},
     }
 
     if dry_run:
@@ -192,8 +193,9 @@ def unblock_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
         return result
 
     try:
-        key  = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, WINDOWS_POLICY_KEY, 0,
-                              winreg.KEY_ALL_ACCESS)
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE, WINDOWS_POLICY_KEY, 0, winreg.KEY_ALL_ACCESS
+        )
         slot = _find_existing_slot(key, extension_id)
         if slot is None:
             winreg.CloseKey(key)
@@ -217,18 +219,19 @@ def unblock_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
 # Linux: JSON file in /etc/opt/chrome/policies/managed/
 # ---------------------------------------------------------------------------
 
+
 def block_extension_linux(extension_id: str, dry_run: bool = False) -> dict:
     """
     Add an extension ID to a JSON policy file Chrome reads at startup.
     Multiple files in the managed/ directory are merged by Chrome.
     """
     result = {
-        "ok":       False,
+        "ok": False,
         "platform": "linux",
-        "method":   "policy-file",
-        "details":  {
-            "policy_file":   str(LINUX_POLICY_FILE),
-            "extension_id":  extension_id,
+        "method": "policy-file",
+        "details": {
+            "policy_file": str(LINUX_POLICY_FILE),
+            "extension_id": extension_id,
         },
     }
 
@@ -262,10 +265,7 @@ def block_extension_linux(extension_id: str, dry_run: bool = False) -> dict:
         result["details"]["blocklist_size"] = len(blocklist)
 
     except PermissionError:
-        result["error"] = (
-            f"Access denied writing {LINUX_POLICY_FILE}. "
-            "Re-run with sudo."
-        )
+        result["error"] = f"Access denied writing {LINUX_POLICY_FILE}. Re-run with sudo."
     except OSError as exc:
         result["error"] = f"Policy file write failed: {exc}"
 
@@ -275,6 +275,7 @@ def block_extension_linux(extension_id: str, dry_run: bool = False) -> dict:
 # ---------------------------------------------------------------------------
 # macOS: defaults write to managed plist
 # ---------------------------------------------------------------------------
+
 
 def block_extension_macos(extension_id: str, dry_run: bool = False) -> dict:
     """
@@ -286,11 +287,11 @@ def block_extension_macos(extension_id: str, dry_run: bool = False) -> dict:
     standalone / lab case.
     """
     result = {
-        "ok":       False,
+        "ok": False,
         "platform": "darwin",
-        "method":   "plist",
-        "details":  {
-            "domain":       MACOS_POLICY_DOMAIN,
+        "method": "plist",
+        "details": {
+            "domain": MACOS_POLICY_DOMAIN,
             "extension_id": extension_id,
         },
     }
@@ -307,17 +308,20 @@ def block_extension_macos(extension_id: str, dry_run: bool = False) -> dict:
     try:
         # Use `defaults` to append to the array — sudo required
         cmd = [
-            "sudo", "defaults", "write", MACOS_POLICY_DOMAIN,
-            "ExtensionInstallBlocklist", "-array-add", extension_id
+            "sudo",
+            "defaults",
+            "write",
+            MACOS_POLICY_DOMAIN,
+            "ExtensionInstallBlocklist",
+            "-array-add",
+            extension_id,
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
 
         if proc.returncode == 0:
             result["ok"] = True
         else:
-            result["error"] = (
-                f"defaults command failed: {proc.stderr.strip() or 'unknown error'}"
-            )
+            result["error"] = f"defaults command failed: {proc.stderr.strip() or 'unknown error'}"
     except subprocess.TimeoutExpired:
         result["error"] = "defaults command timed out"
     except FileNotFoundError:
@@ -376,13 +380,13 @@ def block_extension_workspace(
     dispatcher.
     """
     result = {
-        "ok":       False,
+        "ok": False,
         "platform": "google-workspace",
-        "method":   "admin-sdk",
+        "method": "admin-sdk",
         "details": {
-            "extension_id":  extension_id,
-            "org_unit":      org_unit,
-            "customer_id":   cfg.get("customer_id"),
+            "extension_id": extension_id,
+            "org_unit": org_unit,
+            "customer_id": cfg.get("customer_id"),
         },
     }
 
@@ -419,10 +423,7 @@ def block_extension_workspace(
         from googleapiclient.discovery import build
         from googleapiclient.errors import HttpError
     except ImportError:
-        result["error"] = (
-            "Google API libraries not installed. "
-            "Run:  pip install -e \".[workspace]\""
-        )
+        result["error"] = 'Google API libraries not installed. Run:  pip install -e ".[workspace]"'
         return result
 
     # --- 4. Authenticate ---------------------------------------------------
@@ -466,10 +467,14 @@ def block_extension_workspace(
             ],
         }
 
-        response = policies.orgunits().batchModify(
-            customer=f"customers/{customer_id}",
-            body=modify_request,
-        ).execute()
+        response = (
+            policies.orgunits()
+            .batchModify(
+                customer=f"customers/{customer_id}",
+                body=modify_request,
+            )
+            .execute()
+        )
 
         result["ok"] = True
         result["details"]["api_response"] = response

@@ -19,16 +19,20 @@ from update_velocity import (
 # Version-string parsing
 # ---------------------------------------------------------------------------
 
+
 class TestParseVersion:
-    @pytest.mark.parametrize("input_str,expected", [
-        ("1.0.0",       (1, 0, 0)),
-        ("17.3.1",      (17, 3, 1)),
-        ("1.0",         (1, 0)),
-        ("1",           (1,)),
-        ("1.0.0.0",     (1, 0, 0, 0)),
-        ("1.0.0-beta1", (1, 0, 0)),   # Strip pre-release tags
-        ("2.0+build42", (2, 0)),      # Strip build metadata
-    ])
+    @pytest.mark.parametrize(
+        "input_str,expected",
+        [
+            ("1.0.0", (1, 0, 0)),
+            ("17.3.1", (17, 3, 1)),
+            ("1.0", (1, 0)),
+            ("1", (1,)),
+            ("1.0.0.0", (1, 0, 0, 0)),
+            ("1.0.0-beta1", (1, 0, 0)),  # Strip pre-release tags
+            ("2.0+build42", (2, 0)),  # Strip build metadata
+        ],
+    )
     def test_parses_common_formats(self, input_str, expected):
         assert _parse_version(input_str) == expected
 
@@ -47,6 +51,7 @@ class TestParseVersion:
 # ---------------------------------------------------------------------------
 # Jump computation
 # ---------------------------------------------------------------------------
+
 
 class TestComputeJump:
     def test_simple_patch_bump(self):
@@ -74,6 +79,7 @@ class TestComputeJump:
 # Suspicion thresholds
 # ---------------------------------------------------------------------------
 
+
 class TestEvaluateJump:
     def test_teamccp_major_jump_flagged(self):
         """The actual TeamPCP attack: 1.0.4 -> 17.3.1."""
@@ -99,6 +105,7 @@ class TestEvaluateJump:
 # Tuple comparison
 # ---------------------------------------------------------------------------
 
+
 class TestTupleGt:
     def test_basic_comparison(self):
         assert _tuple_gt((2, 0, 0), (1, 9, 9))
@@ -114,6 +121,7 @@ class TestTupleGt:
 # ---------------------------------------------------------------------------
 # End-to-end: history persistence
 # ---------------------------------------------------------------------------
+
 
 class TestHistoryPersistence:
     """Tests that exercise the JSON history file (using temp_history_file fixture)."""
@@ -186,6 +194,7 @@ class TestAtomicWrite:
         import json as _json
 
         from update_velocity import analyse_version
+
         analyse_version("1.0.0", extension_id="abc", extension_name="X")
         # File should exist and be parseable
         assert temp_history_file.exists()
@@ -195,6 +204,7 @@ class TestAtomicWrite:
     def test_no_temp_files_left_behind(self, temp_history_file):
         """The tempfile used for atomic write must be cleaned up after success."""
         from update_velocity import analyse_version
+
         analyse_version("1.0.0", extension_id="abc")
         # Look for any leftover .version_history-*.tmp files
         leftovers = list(temp_history_file.parent.glob(".version_history-*.tmp"))

@@ -8,16 +8,17 @@ from config_schema import format_errors, validate
 # Empty / disabled adapters: should always pass
 # ---------------------------------------------------------------------------
 
+
 class TestDisabledAdapters:
     def test_empty_config_is_valid(self):
         assert validate({}) == []
 
     def test_all_disabled_is_valid(self):
         cfg = {
-            "sentinel":  {"enabled": False},
-            "splunk":    {"enabled": False},
+            "sentinel": {"enabled": False},
+            "splunk": {"enabled": False},
             "pagerduty": {"enabled": False},
-            "slack":     {"enabled": False},
+            "slack": {"enabled": False},
         }
         assert validate(cfg) == []
 
@@ -32,19 +33,20 @@ class TestDisabledAdapters:
 # Required credentials when enabled
 # ---------------------------------------------------------------------------
 
+
 class TestRequiredKeys:
     def test_enabled_sentinel_needs_workspace_and_key(self):
         cfg = {"sentinel": {"enabled": True}}
         errors = validate(cfg)
         keys = {e["key"] for e in errors if e["section"] == "sentinel"}
         assert "workspace_id" in keys
-        assert "shared_key"   in keys
+        assert "shared_key" in keys
 
     def test_enabled_splunk_needs_url_and_token(self):
         cfg = {"splunk": {"enabled": True}}
         errors = validate(cfg)
         keys = {e["key"] for e in errors if e["section"] == "splunk"}
-        assert "hec_url"   in keys
+        assert "hec_url" in keys
         assert "hec_token" in keys
 
     def test_enabled_pagerduty_needs_integration_key(self):
@@ -64,13 +66,14 @@ class TestRequiredKeys:
 # Placeholder detection
 # ---------------------------------------------------------------------------
 
+
 class TestPlaceholders:
     def test_unedited_placeholder_flagged(self):
         cfg = {
             "sentinel": {
                 "enabled": True,
                 "workspace_id": "YOUR-WORKSPACE-ID-HERE",
-                "shared_key":   "dGVzdA==",
+                "shared_key": "dGVzdA==",
             }
         }
         errors = validate(cfg)
@@ -79,9 +82,9 @@ class TestPlaceholders:
     def test_real_value_not_flagged(self):
         cfg = {
             "sentinel": {
-                "enabled":      True,
+                "enabled": True,
                 "workspace_id": "real-workspace-uuid-1234",
-                "shared_key":   "dGVzdA==",
+                "shared_key": "dGVzdA==",
             }
         }
         errors = validate(cfg)
@@ -92,18 +95,18 @@ class TestPlaceholders:
 # Type checking
 # ---------------------------------------------------------------------------
 
+
 class TestTypeChecks:
     def test_wrong_type_for_credential_flagged(self):
         cfg = {
             "splunk": {
-                "enabled":   True,
-                "hec_url":   "https://splunk.example.com/services/collector/event",
-                "hec_token": 12345,   # should be a string
+                "enabled": True,
+                "hec_url": "https://splunk.example.com/services/collector/event",
+                "hec_token": 12345,  # should be a string
             }
         }
         errors = validate(cfg)
-        assert any(e["key"] == "hec_token" and "expected str" in e["problem"]
-                   for e in errors)
+        assert any(e["key"] == "hec_token" and "expected str" in e["problem"] for e in errors)
 
     def test_adapter_section_must_be_object(self):
         cfg = {"splunk": "not an object"}
@@ -115,13 +118,14 @@ class TestTypeChecks:
 # Severity values
 # ---------------------------------------------------------------------------
 
+
 class TestSeverityValidation:
     def test_invalid_severity_flagged(self):
         cfg = {
             "slack": {
-                "enabled":      True,
-                "webhook_url":  "https://hooks.slack.com/services/X/Y/realsecret",
-                "min_severity": "extreme",   # not one of the valid four
+                "enabled": True,
+                "webhook_url": "https://hooks.slack.com/services/X/Y/realsecret",
+                "min_severity": "extreme",  # not one of the valid four
             }
         }
         errors = validate(cfg)
@@ -130,32 +134,31 @@ class TestSeverityValidation:
     def test_dispatch_min_severity_validated(self):
         cfg = {"dispatch": {"min_severity": "ultra"}}
         errors = validate(cfg)
-        assert any(e["section"] == "dispatch" and e["key"] == "min_severity"
-                   for e in errors)
+        assert any(e["section"] == "dispatch" and e["key"] == "min_severity" for e in errors)
 
 
 # ---------------------------------------------------------------------------
 # URL format
 # ---------------------------------------------------------------------------
 
+
 class TestUrlValidation:
     def test_url_must_have_scheme(self):
         cfg = {
             "splunk": {
-                "enabled":   True,
-                "hec_url":   "splunk.example.com:8088",   # no scheme
+                "enabled": True,
+                "hec_url": "splunk.example.com:8088",  # no scheme
                 "hec_token": "real-token-not-placeholder",
             }
         }
         errors = validate(cfg)
-        assert any(e["key"] == "hec_url" and "http" in e["problem"]
-                   for e in errors)
+        assert any(e["key"] == "hec_url" and "http" in e["problem"] for e in errors)
 
     def test_valid_https_url_passes(self):
         cfg = {
             "splunk": {
-                "enabled":   True,
-                "hec_url":   "https://splunk.example.com:8088/services/collector/event",
+                "enabled": True,
+                "hec_url": "https://splunk.example.com:8088/services/collector/event",
                 "hec_token": "real-token",
             }
         }
@@ -166,6 +169,7 @@ class TestUrlValidation:
 # ---------------------------------------------------------------------------
 # Dispatch settings
 # ---------------------------------------------------------------------------
+
 
 class TestDispatchValidation:
     def test_negative_ttl_flagged(self):
@@ -186,10 +190,10 @@ class TestDispatchValidation:
     def test_valid_dispatch_section(self):
         cfg = {
             "dispatch": {
-                "dedup_ttl_seconds":    300,
+                "dedup_ttl_seconds": 300,
                 "escalation_threshold": 3,
-                "min_severity":         "low",
-                "triage_min_score":     45,
+                "min_severity": "low",
+                "triage_min_score": 45,
             }
         }
         assert validate(cfg) == []
@@ -198,6 +202,7 @@ class TestDispatchValidation:
 # ---------------------------------------------------------------------------
 # Error formatting
 # ---------------------------------------------------------------------------
+
 
 class TestFormatErrors:
     def test_empty_errors_returns_ok_message(self):

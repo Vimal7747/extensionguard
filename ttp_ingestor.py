@@ -47,6 +47,7 @@ REQUEST_TIMEOUT = 10
 # Webhook signature verification
 # ---------------------------------------------------------------------------
 
+
 def verify_github_signature(
     payload_body: bytes,
     signature_header: str,
@@ -72,11 +73,14 @@ def verify_github_signature(
     if not signature_header.startswith("sha256="):
         return False
 
-    expected = "sha256=" + hmac.new(
-        secret.encode("utf-8"),
-        payload_body,
-        digestmod=hashlib.sha256,
-    ).hexdigest()
+    expected = (
+        "sha256="
+        + hmac.new(
+            secret.encode("utf-8"),
+            payload_body,
+            digestmod=hashlib.sha256,
+        ).hexdigest()
+    )
 
     # Constant-time comparison so an attacker can't timing-leak the signature
     return hmac.compare_digest(expected, signature_header)
@@ -85,6 +89,7 @@ def verify_github_signature(
 # ---------------------------------------------------------------------------
 # Sync from GitHub Contents API
 # ---------------------------------------------------------------------------
+
 
 def sync_from_github(
     owner: str,
@@ -123,12 +128,12 @@ def sync_from_github(
     token = github_token or os.environ.get("GITHUB_TOKEN")
 
     result = {
-        "ok":      False,
+        "ok": False,
         "fetched": 0,
         "skipped": 0,
         "deleted": 0,
-        "errors":  [],
-        "files":   [],
+        "errors": [],
+        "files": [],
     }
 
     headers = {"Accept": "application/vnd.github+json"}
@@ -138,7 +143,11 @@ def sync_from_github(
     # 1. Enumerate the remote tree (recursive)
     try:
         remote_files = _list_remote_md_files(
-            owner=owner, repo=repo, path=path, branch=branch, headers=headers,
+            owner=owner,
+            repo=repo,
+            path=path,
+            branch=branch,
+            headers=headers,
         )
     except Exception as exc:
         result["errors"].append(f"Failed to list remote files: {exc}")
@@ -158,7 +167,7 @@ def sync_from_github(
         # the local file goes to target_root/<rest> not target_root/ttp/<rest>)
         local_rel = rel_path
         if path and local_rel.startswith(path.rstrip("/") + "/"):
-            local_rel = local_rel[len(path.rstrip("/")) + 1:]
+            local_rel = local_rel[len(path.rstrip("/")) + 1 :]
         local_path = target_root / local_rel
         seen_local_paths.add(local_path.resolve())
 
@@ -196,8 +205,13 @@ def sync_from_github(
 
     log.info(
         "TTP sync from %s/%s@%s: fetched=%d skipped=%d deleted=%d errors=%d",
-        owner, repo, branch,
-        result["fetched"], result["skipped"], result["deleted"], len(result["errors"]),
+        owner,
+        repo,
+        branch,
+        result["fetched"],
+        result["skipped"],
+        result["deleted"],
+        len(result["errors"]),
     )
     return result
 
@@ -206,8 +220,13 @@ def sync_from_github(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+
 def _list_remote_md_files(
-    owner: str, repo: str, path: str, branch: str, headers: dict,
+    owner: str,
+    repo: str,
+    path: str,
+    branch: str,
+    headers: dict,
 ) -> list:
     """
     Walk the remote repo tree and return a list of all .md file entries.
@@ -244,8 +263,11 @@ def _list_remote_md_files(
             # Recurse into subdirectory. Use the raw "path" field from the entry
             # so we don't have to reconstruct the path ourselves.
             sub_files = _list_remote_md_files(
-                owner=owner, repo=repo, path=entry["path"],
-                branch=branch, headers=headers,
+                owner=owner,
+                repo=repo,
+                path=entry["path"],
+                branch=branch,
+                headers=headers,
             )
             files.extend(sub_files)
 
@@ -271,7 +293,7 @@ def _fetch_file(
     if expected_sha and local_path.exists():
         local_sha = _git_blob_sha1(local_path.read_bytes())
         if local_sha == expected_sha:
-            return False   # Already up-to-date
+            return False  # Already up-to-date
 
     resp = requests.get(download_url, headers=headers, timeout=REQUEST_TIMEOUT)
     if resp.status_code != 200:
@@ -295,6 +317,7 @@ def _git_blob_sha1(content: bytes) -> str:
 # CLI entry point
 # ---------------------------------------------------------------------------
 
+
 def main():
     """`extguard-ttp-sync` command."""
     import argparse
@@ -312,17 +335,23 @@ def main():
             "  Set GITHUB_TOKEN env var for private repos or higher rate limits.\n"
         ),
     )
-    parser.add_argument("--owner",  help="Repo owner (org or user)")
-    parser.add_argument("--repo",   help="Repository name")
-    parser.add_argument("--path",   default="", help="Subdirectory inside the repo (default: root)")
+    parser.add_argument("--owner", help="Repo owner (org or user)")
+    parser.add_argument("--repo", help="Repository name")
+    parser.add_argument("--path", default="", help="Subdirectory inside the repo (default: root)")
     parser.add_argument("--branch", default="main", help="Branch/tag/SHA to sync from")
-    parser.add_argument("--target", default=None, help="Local target directory (default: ./ttp_library)")
     parser.add_argument(
-        "--config", default="extguard.conf.json",
+        "--target", default=None, help="Local target directory (default: ./ttp_library)"
+    )
+    parser.add_argument(
+        "--config",
+        default="extguard.conf.json",
         help="Read owner/repo/path/branch from a webhook section of this config file",
     )
-    parser.add_argument("--delete-orphans", action="store_true",
-                        help="Remove local .md files no longer in the remote repo")
+    parser.add_argument(
+        "--delete-orphans",
+        action="store_true",
+        help="Remove local .md files no longer in the remote repo",
+    )
     args = parser.parse_args()
 
     # If owner/repo not given, try the config file
@@ -330,20 +359,22 @@ def main():
     if not (owner and repo):
         cfg = _load_webhook_cfg(args.config)
         if cfg:
-            owner  = owner  or cfg.get("owner")
-            repo   = repo   or cfg.get("repo")
-            path   = path   or cfg.get("path", "")
+            owner = owner or cfg.get("owner")
+            repo = repo or cfg.get("repo")
+            path = path or cfg.get("path", "")
             branch = cfg.get("branch", branch)
 
     if not (owner and repo):
         parser.error(
-            "Provide --owner and --repo, OR put them in the webhook section "
-            "of extguard.conf.json"
+            "Provide --owner and --repo, OR put them in the webhook section of extguard.conf.json"
         )
 
     print(f"Syncing TTP library from {owner}/{repo}@{branch}/{path or '<root>'}...")
     result = sync_from_github(
-        owner=owner, repo=repo, path=path, branch=branch,
+        owner=owner,
+        repo=repo,
+        path=path,
+        branch=branch,
         target_root=args.target,
         delete_orphans=args.delete_orphans,
     )
@@ -351,6 +382,7 @@ def main():
     print(json.dumps(result, indent=2))
     if not result["ok"]:
         import sys
+
         sys.exit(1)
 
 
@@ -358,6 +390,7 @@ def _load_webhook_cfg(config_path) -> dict | None:
     """Pull the `webhook` section from extguard.conf.json if it exists."""
     import json
     from pathlib import Path
+
     p = Path(config_path)
     if not p.exists():
         return None
