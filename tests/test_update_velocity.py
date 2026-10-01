@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from update_velocity import (
+from extguard.update_velocity import (
     SUSPICIOUS_MAJOR_JUMP,
     SUSPICIOUS_MINOR_JUMP,
     SUSPICIOUS_PATCH_JUMP,
@@ -159,31 +159,76 @@ class TestHistoryPersistence:
         assert result["velocity_score"] == 0
 
 
-class TestCwsMismatch:
-    """When the local version is AHEAD of CWS, it suggests a tampered update."""
+class TestCwsVersion:
+    """The store comparison moved to publisher_checker (which also compares the
+    build hash). Velocity must not score it too - that double-counted."""
 
-    def test_local_ahead_of_cws_flagged(self, temp_history_file):
-        result = analyse_version(
-            manifest_version="2.0.0",
-            cws_version="1.0.0",
-            extension_id="abc",
-        )
-        assert result["velocity_score"] > 0
-        assert any("AHEAD of CWS" in f for f in result["flags"])
-
-    def test_local_behind_cws_not_flagged(self, temp_history_file):
-        """Old local install lagging behind the store - normal."""
-        result = analyse_version(
-            manifest_version="1.0.0",
-            cws_version="2.0.0",
-            extension_id="abc",
-        )
-        assert not any("AHEAD of CWS" in f for f in result["flags"])
+    def test_cws_version_is_reported_but_not_scored(self, temp_history_file):
+        result = analyse_version(manifest_version="2.0.0", cws_version="1.0.0", extension_id="abc")
+        assert result["cws_version"] == "1.0.0"
+        assert result["velocity_score"] == 0
 
     def test_low_version_flagged_softly(self, temp_history_file):
         """Major version 0 is a soft signal - brand new extension."""
         result = analyse_version("0.0.5", extension_id="abc")
         assert result["velocity_score"] >= 3
+
+    def test_single_segment_zero_does_not_crash(self, temp_history_file):
+        """Regression (review harness #5): version "0" raised IndexError."""
+        result = analyse_version("0", extension_id="abc")
+        assert result["velocity_score"] >= 3
+
+
+class TestRecording:
+    def test_record_false_leaves_baseline_untouched(self, temp_history_file):
+        """Scanning a (possibly malicious) sample must not become the baseline."""
+        analyse_version("1.0.0", extension_id="abc")
+        analyse_version("1.0.1", extension_id="abc", record=False)
+        result = analyse_version("1.0.2", extension_id="abc", record=False)
+        assert result["previous_version"] == "1.0.0"
+
+    def test_record_version_sets_baseline(self, temp_history_file):
+        from extguard.update_velocity import record_version
+
+        assert record_version("2.0.0", "abc", "X") is True
+        assert (
+            analyse_version("2.0.1", extension_id="abc", record=False)["previous_version"]
+            == "2.0.0"
+        )
+
+    def test_record_version_without_identity(self, temp_history_file):
+        from extguard.update_velocity import record_version
+
+        assert record_version("1.0.0", None, "__MSG_appName__") is False
+
+    def test_rollback_is_flagged(self, temp_history_file):
+        analyse_version("5.0.0", extension_id="abc")
+        result = analyse_version("1.0.0", extension_id="abc")
+        assert result["is_suspicious"] is True
+        assert any("BACKWARDS" in f for f in result["flags"])
+
+    def test_major_bump_resetting_minor_is_not_a_minor_jump(self, temp_history_file):
+        """1.19.0 -> 2.0.0 has minor delta -19; that's a normal release."""
+        analyse_version("1.19.0", extension_id="abc")
+        result = analyse_version("2.0.0", extension_id="abc")
+        assert result["is_suspicious"] is False
+
+
+class TestStableIdentity:
+    def test_i18n_placeholder_names_do_not_share_history(self, temp_history_file):
+        """Regression (review harness #4): two unrelated extensions both named
+        __MSG_appName__ shared one history and produced a fake major jump."""
+        analyse_version("1.0.0", extension_name="__MSG_appName__")
+        result = analyse_version("5.2.0", extension_name="__MSG_appName__")
+        assert result["previous_version"] is None
+        assert result["is_suspicious"] is False
+        assert any("history skipped" in f for f in result["flags"])
+        assert not temp_history_file.exists()
+
+    def test_plain_name_is_still_tracked(self, temp_history_file):
+        analyse_version("1.0.0", extension_name="My Tool")
+        result = analyse_version("9.0.0", extension_name="My Tool")
+        assert result["previous_version"] == "1.0.0"
 
 
 class TestAtomicWrite:
@@ -193,7 +238,7 @@ class TestAtomicWrite:
     def test_history_file_remains_valid_json_after_write(self, temp_history_file):
         import json as _json
 
-        from update_velocity import analyse_version
+        from extguard.update_velocity import analyse_version
 
         analyse_version("1.0.0", extension_id="abc", extension_name="X")
         # File should exist and be parseable
@@ -203,7 +248,7 @@ class TestAtomicWrite:
 
     def test_no_temp_files_left_behind(self, temp_history_file):
         """The tempfile used for atomic write must be cleaned up after success."""
-        from update_velocity import analyse_version
+        from extguard.update_velocity import analyse_version
 
         analyse_version("1.0.0", extension_id="abc")
         # Look for any leftover .version_history-*.tmp files

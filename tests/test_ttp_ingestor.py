@@ -10,7 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from ttp_ingestor import (
+from extguard import paths, ttp_ingestor
+from extguard.ttp_ingestor import (
     _git_blob_sha1,
     sync_from_github,
     verify_github_signature,
@@ -107,14 +108,14 @@ class TestSyncSuccess:
                 "name": "a.md",
                 "path": "a.md",
                 "sha": _git_blob_sha1(b"alpha content"),
-                "download_url": "https://example.com/a",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/a",
             },
             {
                 "type": "file",
                 "name": "b.md",
                 "path": "b.md",
                 "sha": _git_blob_sha1(b"bravo content"),
-                "download_url": "https://example.com/b",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/b",
             },
             # README should be skipped because it's not .md... wait it IS .md
             # Use a non-md file for the negative case
@@ -122,7 +123,7 @@ class TestSyncSuccess:
                 "type": "file",
                 "name": "ignored.txt",
                 "path": "ignored.txt",
-                "download_url": "https://example.com/ignored",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/ignored",
             },
         ]
         listing_resp = MagicMock(status_code=200)
@@ -140,7 +141,7 @@ class TestSyncSuccess:
                 return b_resp
             raise AssertionError(f"unexpected URL: {url}")
 
-        with patch("ttp_ingestor.requests.get", side_effect=_route):
+        with patch("extguard.ttp_ingestor.requests.get", side_effect=_route):
             result = sync_from_github(
                 owner="o",
                 repo="r",
@@ -169,11 +170,11 @@ class TestSyncSuccess:
                 "name": "x.md",
                 "path": "x.md",
                 "sha": existing_sha,
-                "download_url": "https://example.com/x",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/x",
             }
         ]
 
-        with patch("ttp_ingestor.requests.get", return_value=listing_resp) as mock_get:
+        with patch("extguard.ttp_ingestor.requests.get", return_value=listing_resp) as mock_get:
             result = sync_from_github(owner="o", repo="r", target_root=target)
 
         assert result["skipped"] == 1
@@ -193,7 +194,7 @@ class TestSyncSuccess:
                 "name": "README.md",
                 "path": "README.md",
                 "sha": _git_blob_sha1(b"readme"),
-                "download_url": "https://example.com/readme",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/readme",
             },
         ]
         sub_listing = MagicMock(status_code=200)
@@ -203,7 +204,7 @@ class TestSyncSuccess:
                 "name": "campaign.md",
                 "path": "campaigns/campaign.md",
                 "sha": _git_blob_sha1(b"camp"),
-                "download_url": "https://example.com/camp",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/camp",
             },
         ]
         readme_resp = MagicMock(status_code=200, content=b"readme")
@@ -220,7 +221,7 @@ class TestSyncSuccess:
                 return camp_resp
             raise AssertionError(f"unexpected URL: {url}")
 
-        with patch("ttp_ingestor.requests.get", side_effect=_route):
+        with patch("extguard.ttp_ingestor.requests.get", side_effect=_route):
             result = sync_from_github(owner="o", repo="r", target_root=target)
 
         assert result["fetched"] == 2
@@ -229,7 +230,7 @@ class TestSyncSuccess:
 
     def test_404_returns_error_not_crash(self, tmp_path):
         bad_resp = MagicMock(status_code=404, text="Not Found")
-        with patch("ttp_ingestor.requests.get", return_value=bad_resp):
+        with patch("extguard.ttp_ingestor.requests.get", return_value=bad_resp):
             result = sync_from_github(owner="o", repo="r", target_root=tmp_path)
         assert result["ok"] is False
         assert any("404" in e for e in result["errors"])
@@ -249,11 +250,11 @@ class TestSyncSuccess:
                 "name": "fresh.md",
                 "path": "fresh.md",
                 "sha": _git_blob_sha1(b"kept"),
-                "download_url": "https://example.com/fresh",
+                "download_url": "https://raw.githubusercontent.com/o/r/main/fresh",
             }
         ]
 
-        with patch("ttp_ingestor.requests.get", return_value=listing_resp):
+        with patch("extguard.ttp_ingestor.requests.get", return_value=listing_resp):
             result = sync_from_github(
                 owner="o",
                 repo="r",
@@ -274,7 +275,7 @@ class TestSyncSuccess:
         listing_resp = MagicMock(status_code=200)
         listing_resp.json.return_value = []
 
-        with patch("ttp_ingestor.requests.get", return_value=listing_resp):
+        with patch("extguard.ttp_ingestor.requests.get", return_value=listing_resp):
             result = sync_from_github(owner="o", repo="r", target_root=target)
 
         assert result["deleted"] == 0
@@ -282,122 +283,197 @@ class TestSyncSuccess:
 
 
 # ---------------------------------------------------------------------------
-# Webhook route integration with the dashboard
+# Hardening: token safety, limits, orphans, signed commits
 # ---------------------------------------------------------------------------
 
 
-class TestWebhookRoute:
-    """Hit the dashboard's /webhook/github route with various scenarios."""
+def _listing(*entries):
+    resp = MagicMock(status_code=200)
+    resp.json.return_value = list(entries)
+    return resp
 
-    @pytest.fixture
-    def client(self, tmp_path):
-        """A dashboard client with webhook config preloaded."""
-        from dashboard import create_app
 
-        app = create_app(
-            quarantine_root=tmp_path / "quarantine",
-            webhook_cfg={
-                "owner": "test",
-                "repo": "ttp",
-                "branch": "main",
-                "secret": "test-secret",
-            },
-        )
-        app.config["TESTING"] = True
-        return app.test_client()
+def _file_entry(name, content, url=None, size=None):
+    entry = {
+        "type": "file",
+        "name": name,
+        "path": name,
+        "sha": _git_blob_sha1(content),
+        "download_url": url or f"https://raw.githubusercontent.com/o/r/main/{name}",
+    }
+    if size is not None:
+        entry["size"] = size
+    return entry
 
-    def test_no_signature_rejected_401(self, client):
-        resp = client.post(
-            "/webhook/github", data='{"ref":"refs/heads/main"}', content_type="application/json"
-        )
-        assert resp.status_code == 401
 
-    def test_bad_signature_rejected_401(self, client):
-        resp = client.post(
-            "/webhook/github",
-            data='{"ref":"refs/heads/main"}',
-            content_type="application/json",
-            headers={"X-Hub-Signature-256": "sha256=00000000"},
-        )
-        assert resp.status_code == 401
+def _router(listing, download, commit=None):
+    """requests.get stand-in: listing for Contents API calls, else the download."""
 
-    def test_ping_event_returns_pong(self, client):
-        body = b'{"zen": "Always test"}'
-        sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
-        resp = client.post(
-            "/webhook/github",
-            data=body,
-            content_type="application/json",
-            headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "ping"},
-        )
-        assert resp.status_code == 200
-        assert b"pong" in resp.data
+    def _route(url, **kwargs):
+        if commit is not None and "/commits/" in url:
+            return commit
+        return listing if "contents" in url else download
 
-    def test_non_push_event_ignored(self, client):
-        body = b'{"action":"opened"}'
-        sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
-        resp = client.post(
-            "/webhook/github",
-            data=body,
-            content_type="application/json",
-            headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "pull_request"},
-        )
-        assert resp.status_code == 200
-        assert b"ignored" in resp.data
+    return _route
 
-    def test_push_to_wrong_branch_ignored(self, client):
-        body = b'{"ref":"refs/heads/feature-branch"}'
-        sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
-        resp = client.post(
-            "/webhook/github",
-            data=body,
-            content_type="application/json",
-            headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "push"},
-        )
-        assert resp.status_code == 200
-        assert b"ignored_ref" in resp.data
 
-    def test_push_to_configured_branch_triggers_sync(self, client):
-        """The HMAC-valid push to the right branch should trigger sync_from_github."""
-        body = b'{"ref":"refs/heads/main"}'
-        sig = "sha256=" + hmac.new(b"test-secret", body, hashlib.sha256).hexdigest()
+class TestSyncHardening:
+    def test_default_target_is_the_pending_folder(self):
+        """A sync must not change what Claude sees until it is activated."""
+        listing = _listing(_file_entry("a.md", b"alpha"))
+        download = MagicMock(status_code=200, content=b"alpha")
 
-        with patch("dashboard.sync_from_github") as mock_sync:
-            mock_sync.return_value = {
-                "ok": True,
-                "fetched": 3,
-                "skipped": 1,
-                "deleted": 0,
-                "errors": [],
-                "files": ["a.md", "b.md", "c.md"],
-            }
-            resp = client.post(
-                "/webhook/github",
-                data=body,
-                content_type="application/json",
-                headers={"X-Hub-Signature-256": sig, "X-GitHub-Event": "push"},
+        with patch("extguard.ttp_ingestor.requests.get", side_effect=_router(listing, download)):
+            result = sync_from_github(owner="o", repo="r")
+
+        assert result["ok"] is True
+        assert (paths.ttp_pending_dir() / "a.md").read_bytes() == b"alpha"
+        assert not (paths.ttp_user_dir() / "a.md").exists()
+
+    def test_token_never_sent_off_github(self, tmp_path):
+        listing = _listing(_file_entry("a.md", b"x", url="https://evil.example/a.md"))
+        with patch("extguard.ttp_ingestor.requests.get", return_value=listing) as mock_get:
+            result = sync_from_github(
+                owner="o", repo="r", target_root=tmp_path, github_token="ghp_secret"
             )
+        assert result["ok"] is False
+        assert any("not on GitHub" in e for e in result["errors"])
+        # Only the listing call went out - the off-GitHub URL was never fetched
+        assert mock_get.call_count == 1
 
-        assert resp.status_code == 200
-        mock_sync.assert_called_once()
-        # Verify the sync was called with the configured owner/repo
-        kwargs = mock_sync.call_args.kwargs
-        assert kwargs["owner"] == "test"
-        assert kwargs["repo"] == "ttp"
-        assert kwargs["branch"] == "main"
+    def test_oversized_file_refused_from_listing(self, tmp_path):
+        listing = _listing(_file_entry("big.md", b"x", size=ttp_ingestor.MAX_FILE_BYTES + 1))
+        with patch("extguard.ttp_ingestor.requests.get", return_value=listing) as mock_get:
+            result = sync_from_github(owner="o", repo="r", target_root=tmp_path)
+        assert result["ok"] is False
+        assert mock_get.call_count == 1
+        assert not (tmp_path / "big.md").exists()
 
-    def test_no_secret_returns_503(self, tmp_path):
-        """A dashboard with no webhook secret should reject all webhook calls."""
-        from dashboard import create_app
+    def test_oversized_download_refused(self, tmp_path):
+        big = b"x" * (ttp_ingestor.MAX_FILE_BYTES + 1)
+        listing = _listing(_file_entry("big.md", b"small"))
+        download = MagicMock(status_code=200, content=big)
 
-        app = create_app(
-            quarantine_root=tmp_path / "quarantine",
-            webhook_cfg=None,
-        )
-        client = app.test_client()
-        resp = client.post(
-            "/webhook/github",
-            data=b"{}",
-            content_type="application/json",
-        )
-        assert resp.status_code == 503
+        with patch("extguard.ttp_ingestor.requests.get", side_effect=_router(listing, download)):
+            result = sync_from_github(owner="o", repo="r", target_root=tmp_path)
+        assert result["ok"] is False
+        assert not (tmp_path / "big.md").exists()
+
+    def test_path_escaping_target_refused(self, tmp_path):
+        entry = _file_entry("x.md", b"x")
+        entry["path"] = "../outside.md"
+        with patch("extguard.ttp_ingestor.requests.get", return_value=_listing(entry)):
+            result = sync_from_github(owner="o", repo="r", target_root=tmp_path / "t")
+        assert result["ok"] is False
+        assert not (tmp_path / "outside.md").exists()
+
+    def test_delete_orphans_refuses_to_wipe_most_of_the_library(self, tmp_path):
+        target = tmp_path / "ttp"
+        target.mkdir()
+        for i in range(5):
+            (target / f"old{i}.md").write_text("old")
+        (target / "keep.md").write_text("keep")
+        listing = _listing(_file_entry("keep.md", b"keep"))
+
+        with patch("extguard.ttp_ingestor.requests.get", return_value=listing):
+            result = sync_from_github(owner="o", repo="r", target_root=target, delete_orphans=True)
+        assert result["deleted"] == 0
+        assert any("refused" in e for e in result["errors"])
+        assert len(list(target.glob("*.md"))) == 6
+
+    def test_delete_orphans_skipped_after_errors(self, tmp_path):
+        target = tmp_path / "ttp"
+        target.mkdir()
+        (target / "old.md").write_text("old")
+        (target / "a.md").write_text("a")
+        (target / "b.md").write_text("b")
+        listing = _listing(_file_entry("a.md", b"a"), _file_entry("b.md", b"new b"))
+        failed = MagicMock(status_code=500)
+
+        with patch("extguard.ttp_ingestor.requests.get", side_effect=_router(listing, failed)):
+            result = sync_from_github(owner="o", repo="r", target_root=target, delete_orphans=True)
+        assert result["deleted"] == 0
+        assert (target / "old.md").exists()
+
+    def test_unverified_commit_refused(self, tmp_path):
+        commit = MagicMock(status_code=200)
+        commit.json.return_value = {
+            "commit": {"verification": {"verified": False, "reason": "unsigned"}}
+        }
+        with patch("extguard.ttp_ingestor.requests.get", return_value=commit) as mock_get:
+            result = sync_from_github(
+                owner="o", repo="r", target_root=tmp_path, require_verified_commit=True
+            )
+        assert result["ok"] is False
+        assert any("unsigned" in e for e in result["errors"])
+        assert mock_get.call_count == 1  # no listing, no downloads
+
+    def test_verified_commit_allows_sync(self, tmp_path):
+        commit = MagicMock(status_code=200)
+        commit.json.return_value = {"commit": {"verification": {"verified": True}}}
+        listing = _listing(_file_entry("a.md", b"alpha"))
+        download = MagicMock(status_code=200, content=b"alpha")
+
+        with patch(
+            "extguard.ttp_ingestor.requests.get",
+            side_effect=_router(listing, download, commit),
+        ):
+            result = sync_from_github(
+                owner="o", repo="r", target_root=tmp_path, require_verified_commit=True
+            )
+        assert result["ok"] is True
+
+
+# ---------------------------------------------------------------------------
+# Approval gate: pending -> active
+# ---------------------------------------------------------------------------
+
+
+class TestActivation:
+    def test_pending_changes_lists_added_changed_removed(self, tmp_path):
+        pending, active = tmp_path / "pending", tmp_path / "active"
+        pending.mkdir()
+        active.mkdir()
+        (pending / "new.md").write_text("new")
+        (pending / "same.md").write_text("same")
+        (active / "same.md").write_text("same")
+        (pending / "edit.md").write_text("v2")
+        (active / "edit.md").write_text("v1")
+        (active / "gone.md").write_text("gone")
+
+        changes = ttp_ingestor.pending_changes(pending, active)
+        assert changes["pending"] is True
+        assert changes["added"] == ["new.md"]
+        assert changes["changed"] == ["edit.md"]
+        assert changes["removed"] == ["gone.md"]
+
+    def test_activate_swaps_in_pending_and_keeps_previous(self, tmp_path):
+        pending, active = tmp_path / "pending", tmp_path / "active"
+        pending.mkdir()
+        active.mkdir()
+        (pending / "a.md").write_text("new intel")
+        (active / "a.md").write_text("old intel")
+
+        result = ttp_ingestor.activate_pending(pending, active)
+        assert result["ok"] is True
+        assert (active / "a.md").read_text() == "new intel"
+        assert (tmp_path / "active.previous" / "a.md").read_text() == "old intel"
+        # Pending stays, so the next sync only downloads what changed
+        assert (pending / "a.md").exists()
+        assert ttp_ingestor.pending_changes(pending, active)["pending"] is False
+
+    def test_activate_without_pending_fails(self, tmp_path):
+        result = ttp_ingestor.activate_pending(tmp_path / "none", tmp_path / "active")
+        assert result["ok"] is False
+
+    def test_cli_sync_stages_then_activate(self, capsys):
+        listing = _listing(_file_entry("a.md", b"alpha"))
+        download = MagicMock(status_code=200, content=b"alpha")
+
+        with patch("extguard.ttp_ingestor.requests.get", side_effect=_router(listing, download)):
+            assert ttp_ingestor.main(["--owner", "o", "--repo", "r"]) == 0
+        assert "--activate" in capsys.readouterr().out
+        assert not (paths.ttp_user_dir() / "a.md").exists()
+
+        assert ttp_ingestor.main(["--activate"]) == 0
+        assert (paths.ttp_user_dir() / "a.md").read_bytes() == b"alpha"

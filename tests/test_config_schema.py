@@ -2,7 +2,7 @@
 
 import pytest
 
-from config_schema import format_errors, validate
+from extguard.config_schema import format_errors, validate
 
 # ---------------------------------------------------------------------------
 # Empty / disabled adapters: should always pass

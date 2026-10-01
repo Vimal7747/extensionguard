@@ -1,0 +1,7 @@
+{
+  "status_code": 400,
+  "body": {
+    "code": 3,
+    "message": "invalid query"
+  }
+}

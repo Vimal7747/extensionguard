@@ -9,12 +9,13 @@
 # are tested directly with mocked requests.
 
 import asyncio
+import json
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import behavioral_monitor as bm
+from extguard import behavioral_monitor as bm
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -35,10 +36,12 @@ def fake_target():
 
 @pytest.fixture(autouse=True)
 def reset_beacon_tracker():
-    """Make sure beacon-frequency state doesn't leak between tests."""
+    """Make sure beacon-frequency / rate-limit state doesn't leak between tests."""
     bm._beacon_tracker.clear()
+    bm._rule03_last.clear()
     yield
     bm._beacon_tracker.clear()
+    bm._rule03_last.clear()
 
 
 @pytest.fixture
@@ -64,7 +67,10 @@ class TestMakeAlert:
         alert = bm._make_alert("RULE-01", "critical", fake_target, {})
         assert alert["rule"] == "RULE-01"
         assert alert["severity"] == "critical"
-        assert alert["extension"]["id"] == fake_target["id"]
+        # Regression: extension.id used to be the CDP TAB id ("tab-id-xyz"), so
+        # dedup, PagerDuty keys and remediation never saw the real extension ID
+        assert alert["extension"]["id"] == fake_target["_ext_id"]
+        assert alert["extension"]["target_id"] == fake_target["id"]
         assert alert["extension"]["title"] == fake_target["title"]
         assert "alert_time" in alert
         assert "mitre" in alert
@@ -135,7 +141,7 @@ class TestGetExtensionTargets:
         mock_resp.json.return_value = cdp_response
         mock_resp.raise_for_status.return_value = None
 
-        with patch("behavioral_monitor.requests.get", return_value=mock_resp):
+        with patch("extguard.behavioral_monitor.requests.get", return_value=mock_resp):
             targets = bm.get_extension_targets()
 
         ext_ids = {t["_ext_id"] for t in targets}
@@ -159,7 +165,7 @@ class TestGetExtensionTargets:
         mock_resp.json.return_value = cdp_response
         mock_resp.raise_for_status.return_value = None
 
-        with patch("behavioral_monitor.requests.get", return_value=mock_resp):
+        with patch("extguard.behavioral_monitor.requests.get", return_value=mock_resp):
             targets = bm.get_extension_targets(target_ext_id="a" * 32)
 
         assert len(targets) == 1
@@ -170,7 +176,7 @@ class TestGetExtensionTargets:
         import requests
 
         with patch(
-            "behavioral_monitor.requests.get",
+            "extguard.behavioral_monitor.requests.get",
             side_effect=requests.exceptions.ConnectionError("refused"),
         ):
             with pytest.raises(RuntimeError, match="localhost:9222"):
@@ -181,7 +187,7 @@ class TestGetExtensionTargets:
         mock_resp = MagicMock()
         mock_resp.json.return_value = []
         mock_resp.raise_for_status.return_value = None
-        with patch("behavioral_monitor.requests.get", return_value=mock_resp):
+        with patch("extguard.behavioral_monitor.requests.get", return_value=mock_resp):
             assert bm.get_extension_targets() == []
 
 
@@ -210,31 +216,46 @@ class TestRule01C2Beacon:
         assert rule01[0]["severity"] == "high"
         assert "evil.workers.dev" in rule01[0]["detail"]["host"]
 
-    @pytest.mark.asyncio
-    async def test_two_close_posts_escalate_to_critical(self, fake_target, alert_queue):
-        """Two POSTs within BEACON_INTERVAL_SEC = a confirmed beacon = CRITICAL."""
+    async def _posts_at(self, times, fake_target, alert_queue, monkeypatch):
+        """Send one POST to a C2 host at each fake timestamp; return RULE-01 alerts."""
         params = {
-            "request": {
-                "url": "https://evil.workers.dev/collect",
-                "method": "POST",
-                "headers": {},
-            }
+            "request": {"url": "https://evil.workers.dev/collect", "method": "POST", "headers": {}}
         }
-        # First POST: high severity
-        await bm._handle_network_request(params, fake_target, "ext-id-1", alert_queue)
-        # Second POST 30 seconds later - well within beacon window
-        # We have to fake the timestamp here since beacon tracking uses time.time()
-        # The implementation puts now into the tracker, so a second real call
-        # made immediately should produce interval < BEACON_INTERVAL_SEC
-        await bm._handle_network_request(params, fake_target, "ext-id-1", alert_queue)
+        clock = iter(times)
+        monkeypatch.setattr(bm.time, "time", lambda: next(clock))
+        for _ in times:
+            await bm._handle_network_request(params, fake_target, "ext-id-1", alert_queue)
+        return [a for a in _drain(alert_queue) if a["rule"] == "RULE-01"]
 
-        alerts = _drain(alert_queue)
-        rule01 = [a for a in alerts if a["rule"] == "RULE-01"]
-        # Two alerts: first was 'high', second is 'critical' because interval < limit
-        assert len(rule01) == 2
-        assert rule01[0]["severity"] == "high"
-        assert rule01[1]["severity"] == "critical"
-        assert rule01[1]["detail"]["post_count"] == 2
+    @pytest.mark.asyncio
+    async def test_sixty_second_beacon_goes_critical(self, fake_target, alert_queue, monkeypatch):
+        """Regression (review harness #7): the TeamPCP 60 s beacon never went
+        critical, because the old rule needed two POSTs < 55 s apart."""
+        alerts = await self._posts_at([0, 60, 120, 180], fake_target, alert_queue, monkeypatch)
+        assert [a["severity"] for a in alerts] == ["high", "critical", "critical"]
+        assert alerts[1]["detail"]["interval_sec"] == 60.0
+        assert alerts[1]["detail"]["post_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_jittered_beacon_still_detected(self, fake_target, alert_queue, monkeypatch):
+        alerts = await self._posts_at([0, 58, 121, 179, 240], fake_target, alert_queue, monkeypatch)
+        assert "critical" in [a["severity"] for a in alerts]
+
+    @pytest.mark.asyncio
+    async def test_irregular_posts_are_not_a_beacon(self, fake_target, alert_queue, monkeypatch):
+        alerts = await self._posts_at([0, 5, 300, 310], fake_target, alert_queue, monkeypatch)
+        assert [a["severity"] for a in alerts] == ["high"]
+
+    @pytest.mark.asyncio
+    async def test_two_posts_are_not_enough(self, fake_target, alert_queue, monkeypatch):
+        alerts = await self._posts_at([0, 60], fake_target, alert_queue, monkeypatch)
+        assert [a["severity"] for a in alerts] == ["high"]
+
+    @pytest.mark.asyncio
+    async def test_slow_beacon_detected_too(self, fake_target, alert_queue, monkeypatch):
+        """A 5-minute check-in is still clockwork - the old rule couldn't see it."""
+        alerts = await self._posts_at([0, 300, 600], fake_target, alert_queue, monkeypatch)
+        assert alerts[-1]["severity"] == "critical"
 
     @pytest.mark.asyncio
     async def test_get_request_to_workers_dev_not_flagged(self, fake_target, alert_queue):
@@ -304,53 +325,105 @@ class TestRule01C2Beacon:
 # ---------------------------------------------------------------------------
 
 
-class TestRule02CookieExfil:
+def _post(url, body="", headers=None):
+    return {"request": {"url": url, "method": "POST", "headers": headers or {}, "postData": body}}
+
+
+GH_TOKEN = "ghp_" + "A1b2C3d4E5" * 4
+COOKIE_DUMP = (
+    '[{"domain":".github.com","hostOnly":false,"httpOnly":true,"name":"user_session",'
+    '"sameSite":"lax","storeId":"0","value":"abc123def456ghi789jkl"}]'
+)
+
+
+class TestRule02CredentialExfil:
+    """
+    RULE-02 used to fire when a GitHub cookie was sent TO github.com - that is
+    just the browser's normal session. Exfiltration is credential material
+    leaving for a host it doesn't belong to.
+    """
+
     @pytest.mark.asyncio
-    async def test_cookie_posted_to_github_flagged(self, fake_target, alert_queue):
-        """POST with a session cookie to github.com = credential exfil."""
-        params = {
-            "request": {
-                "url": "https://github.com/api/exfil",
-                "method": "POST",
-                "headers": {
-                    "Cookie": (
-                        "user_session=abc123def456ghi789jklmnopqrstuvwxyz1234567890; _octo=xyz"
-                    ),
-                },
-            }
-        }
-        await bm._handle_network_request(params, fake_target, "ext-id", alert_queue)
+    async def test_cookie_dump_to_third_party(self, fake_target, alert_queue):
+        await bm._handle_network_request(
+            _post("https://stats.evil.example/c", COOKIE_DUMP), fake_target, "ext", alert_queue
+        )
         rule02 = [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"]
         assert len(rule02) == 1
         assert rule02[0]["severity"] == "high"
+        assert "browser cookie dump" in rule02[0]["detail"]["credentials"]
 
     @pytest.mark.asyncio
-    async def test_short_cookie_value_not_flagged(self, fake_target, alert_queue):
-        """A non-session-shaped cookie (short) shouldn't trip RULE-02."""
-        params = {
-            "request": {
-                "url": "https://github.com/api/x",
-                "method": "POST",
-                "headers": {"Cookie": "lang=en; theme=dark"},  # No 32+ char token
-            }
-        }
-        await bm._handle_network_request(params, fake_target, "ext-id", alert_queue)
+    async def test_token_to_exfil_hosting_is_critical(self, fake_target, alert_queue):
+        body = json.dumps({"t": GH_TOKEN})
+        await bm._handle_network_request(
+            _post("https://x.workers.dev/c", body), fake_target, "ext", alert_queue
+        )
         rule02 = [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"]
-        assert rule02 == []
+        assert rule02[0]["severity"] == "critical"
 
     @pytest.mark.asyncio
-    async def test_no_cookie_header_not_flagged(self, fake_target, alert_queue):
-        """No Cookie header at all - obviously not exfil."""
-        params = {
-            "request": {
-                "url": "https://github.com/api/x",
-                "method": "POST",
-                "headers": {},
-            }
-        }
-        await bm._handle_network_request(params, fake_target, "ext-id", alert_queue)
+    async def test_token_in_url_query(self, fake_target, alert_queue):
+        params = {"request": {"url": f"https://evil.example/p?k={GH_TOKEN}", "method": "GET"}}
+        await bm._handle_network_request(params, fake_target, "ext", alert_queue)
+        assert [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"]
+
+    @pytest.mark.asyncio
+    async def test_github_token_forwarded_in_authorization_header(self, fake_target, alert_queue):
+        headers = {"Authorization": f"token {GH_TOKEN}"}
+        await bm._handle_network_request(
+            _post("https://evil.example/api", "", headers), fake_target, "ext", alert_queue
+        )
         rule02 = [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"]
-        assert rule02 == []
+        assert "Authorization header" in rule02[0]["detail"]["credentials"][0]
+
+    @pytest.mark.asyncio
+    async def test_token_sent_to_its_own_service_is_normal(self, fake_target, alert_queue):
+        headers = {"Authorization": f"token {GH_TOKEN}"}
+        await bm._handle_network_request(
+            _post("https://api.github.com/user", "", headers), fake_target, "ext", alert_queue
+        )
+        assert [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"] == []
+
+    @pytest.mark.asyncio
+    async def test_session_cookie_header_to_its_own_domain_is_not_exfil(
+        self, fake_target, alert_queue
+    ):
+        """The old rule flagged exactly this - the browser's own session."""
+        headers = {"Cookie": "user_session=abc123def456ghi789jklmnopqrstuvwxyz1234567890"}
+        await bm._handle_network_request(
+            _post("https://github.com/api/x", "", headers), fake_target, "ext", alert_queue
+        )
+        assert [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"] == []
+
+    @pytest.mark.asyncio
+    async def test_ordinary_body_not_flagged(self, fake_target, alert_queue):
+        await bm._handle_network_request(
+            _post("https://api.example.com/v1", '{"theme": "dark"}'),
+            fake_target,
+            "ext",
+            alert_queue,
+        )
+        assert [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"] == []
+
+
+class TestAuthenticatedRequests:
+    @pytest.mark.asyncio
+    async def test_state_changing_request_with_session_is_session_riding(
+        self, fake_target, alert_queue
+    ):
+        params = _post("https://api.github.com/user/keys", "{}")
+        extra = {"associatedCookies": [{"blockedReasons": [], "cookie": {"name": "user_session"}}]}
+        await bm._handle_authenticated_request(params, extra, fake_target, "ext", alert_queue)
+        alerts = _drain(alert_queue)
+        assert alerts[0]["rule"] == "RULE-03" and alerts[0]["severity"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_blocked_cookies_do_not_count(self, fake_target, alert_queue):
+        params = _post("https://api.github.com/user/keys", "{}")
+        extra = {"associatedCookies": [{"blockedReasons": ["SameSiteLax"], "cookie": {}}]}
+        await bm._handle_authenticated_request(params, extra, fake_target, "ext", alert_queue)
+        assert _drain(alert_queue) == []
 
 
 # ---------------------------------------------------------------------------
@@ -546,3 +619,386 @@ class TestRegexPatterns:
         assert bm.OBFUSCATED_EVAL.search("eval(atob('x'))")
         assert bm.OBFUSCATED_EVAL.search("eval(String.fromCharCode(1))")
         assert not bm.OBFUSCATED_EVAL.search("regular function call")
+
+    @pytest.mark.parametrize(
+        "host",
+        ["notgithub.com", "github.com.attacker.net", "evil-slack.com", "workers.dev.evil.io"],
+    )
+    def test_lookalike_hosts_do_not_match(self, host):
+        """Regression: the patterns were unanchored substrings."""
+        assert not bm.HIGH_VALUE_DOMAINS.search(host)
+        assert not bm.C2_HOST_PATTERNS.search(host)
+
+
+# ---------------------------------------------------------------------------
+# RULE-03 noise control
+# ---------------------------------------------------------------------------
+
+
+class TestRule03RateLimit:
+    @pytest.mark.asyncio
+    async def test_repeat_calls_to_same_host_alert_once(self, fake_target, alert_queue):
+        params = {
+            "request": {"url": "https://api.github.com/user", "method": "POST", "headers": {}}
+        }
+        for _ in range(5):
+            await bm._handle_network_request(params, fake_target, "ext", alert_queue)
+        assert len([a for a in _drain(alert_queue) if a["rule"] == "RULE-03"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# RULE-04 / 05 / 07 - reports from the in-context hooks
+# ---------------------------------------------------------------------------
+
+
+async def _hook(kind, data, fake_target, alert_queue):
+    await bm._handle_hook_event({"kind": kind, "data": data}, fake_target, "ext", alert_queue)
+    return _drain(alert_queue)
+
+
+class TestHookEvents:
+    @pytest.mark.asyncio
+    async def test_storage_staging_base64(self, fake_target, alert_queue):
+        alerts = await _hook(
+            "storage.set",
+            {
+                "area": "local",
+                "keys": ["s_cache"],
+                "size": 400,
+                "sample": '{"s_cache":"' + "QUJD" * 60 + '"}',
+            },
+            fake_target,
+            alert_queue,
+        )
+        assert alerts[0]["rule"] == "RULE-04" and alerts[0]["severity"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_storage_staging_credentials_is_critical(self, fake_target, alert_queue):
+        alerts = await _hook(
+            "storage.set", {"size": 300, "sample": COOKIE_DUMP}, fake_target, alert_queue
+        )
+        assert alerts[0]["severity"] == "critical"
+
+    @pytest.mark.asyncio
+    async def test_ordinary_settings_write_ignored(self, fake_target, alert_queue):
+        alerts = await _hook(
+            "storage.set", {"size": 20, "sample": '{"theme":"dark"}'}, fake_target, alert_queue
+        )
+        assert alerts == []
+
+    @pytest.mark.asyncio
+    async def test_disabling_another_extension(self, fake_target, alert_queue):
+        alerts = await _hook(
+            "management.setEnabled", {"id": "p" * 32, "enabled": False}, fake_target, alert_queue
+        )
+        assert alerts[0]["rule"] == "RULE-05" and alerts[0]["severity"] == "critical"
+        assert alerts[0]["detail"]["victim_extension"] == "p" * 32
+
+    @pytest.mark.asyncio
+    async def test_enabling_is_not_lateral_movement(self, fake_target, alert_queue):
+        assert (
+            await _hook(
+                "management.setEnabled", {"id": "x", "enabled": True}, fake_target, alert_queue
+            )
+            == []
+        )
+
+    @pytest.mark.asyncio
+    async def test_uninstalling_another_extension(self, fake_target, alert_queue):
+        alerts = await _hook("management.uninstall", {"id": "p" * 32}, fake_target, alert_queue)
+        assert alerts[0]["rule"] == "RULE-05"
+
+    @pytest.mark.asyncio
+    async def test_bulk_cookie_read(self, fake_target, alert_queue):
+        alerts = await _hook(
+            "cookies.getAll",
+            {"details": "{}", "count": 312, "domains": [".github.com", ".google.com"]},
+            fake_target,
+            alert_queue,
+        )
+        assert alerts[0]["rule"] == "RULE-07"
+        assert ".github.com" in alerts[0]["detail"]["high_value_domains"]
+
+    @pytest.mark.asyncio
+    async def test_narrow_cookie_read_ignored(self, fake_target, alert_queue):
+        alerts = await _hook(
+            "cookies.getAll",
+            {"details": '{"domain":"myapp.example"}', "count": 2, "domains": ["myapp.example"]},
+            fake_target,
+            alert_queue,
+        )
+        assert alerts == []
+
+    @pytest.mark.asyncio
+    async def test_document_cookie_on_high_value_site(self, fake_target, alert_queue):
+        alerts = await _hook(
+            "document.cookie", {"host": "github.com", "size": 900}, fake_target, alert_queue
+        )
+        assert alerts[0]["rule"] == "RULE-07" and alerts[0]["severity"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_unknown_hook_kind_ignored(self, fake_target, alert_queue):
+        assert await _hook("something.else", {}, fake_target, alert_queue) == []
+
+
+class TestDynamicScripts:
+    @pytest.mark.asyncio
+    async def test_plain_eval_is_medium(self, fake_target, alert_queue):
+        await bm._handle_dynamic_script('console.log("hi")', fake_target, alert_queue)
+        assert _drain(alert_queue)[0]["severity"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_obfuscated_eval_is_high(self, fake_target, alert_queue):
+        src = ";".join(f"var _0x{i:04x}=1" for i in range(20))
+        await bm._handle_dynamic_script(src, fake_target, alert_queue)
+        assert _drain(alert_queue)[0]["severity"] == "high"
+
+
+class TestInitiatingExtension:
+    def test_content_script_frame_in_stack(self):
+        initiator = {
+            "type": "script",
+            "stack": {
+                "callFrames": [{"url": "https://site.example/app.js"}],
+                "parent": {
+                    "callFrames": [{"url": "chrome-extension://" + "b" * 32 + "/content.js"}]
+                },
+            },
+        }
+        assert bm._initiating_extension(initiator) == "b" * 32
+
+    def test_page_own_request(self):
+        assert bm._initiating_extension({"type": "parser", "url": "https://site.example/"}) is None
+
+    def test_malformed(self):
+        assert bm._initiating_extension(None) is None
+        assert bm._initiating_extension({"stack": "nope"}) is None
+
+
+# ---------------------------------------------------------------------------
+# ExtensionMonitor protocol behaviour (fake socket)
+# ---------------------------------------------------------------------------
+
+EXT = "c" * 32
+
+
+class FakeSocket:
+    """Records sent commands; replies to some methods, never to others."""
+
+    def __init__(self, monitor_ref, silent=("Runtime.addBinding",)):
+        self.sent = []
+        self.monitor_ref = monitor_ref
+        self.silent = set(silent)
+
+    async def send(self, raw):
+        msg = json.loads(raw)
+        self.sent.append(msg)
+        if msg["method"] in self.silent:
+            return  # like a paused worker: no reply until it runs
+        result = {}
+        if msg["method"] == "Runtime.evaluate":
+            result = {"result": {"value": "installed"}}
+        if msg["method"] == "Debugger.setInstrumentationBreakpoint":
+            result = {"breakpointId": "bp-1"}
+        future = self.monitor_ref[0]._pending.get(msg["id"])
+        if future and not future.done():
+            future.set_result(result)
+
+    def methods(self, session=None):
+        return [m["method"] for m in self.sent if session is None or m.get("sessionId") == session]
+
+
+def _monitor(**kw):
+    holder = []
+    ws = FakeSocket(holder)
+    mon = bm.ExtensionMonitor(ws, asyncio.Queue(), output_json=True, **kw)
+    holder.append(mon)
+    return mon, ws
+
+
+def _attached(session, kind, url, waiting=True, target_id=None):
+    return {
+        "method": "Target.attachedToTarget",
+        "params": {
+            "sessionId": session,
+            "waitingForDebugger": waiting,
+            "targetInfo": {
+                "targetId": target_id or session + "-t",
+                "type": kind,
+                "url": url,
+                "title": "T",
+            },
+        },
+    }
+
+
+class TestExtensionMonitor:
+    @pytest.mark.asyncio
+    async def test_paused_worker_is_resumed_even_if_setup_never_answers(self):
+        """Real-Chrome regression: awaiting Runtime.addBinding on a paused
+        worker never returns - the worker must still be resumed."""
+        mon, ws = _monitor()
+        await asyncio.wait_for(
+            mon.dispatch(_attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js")),
+            timeout=2,
+        )
+        sent = ws.methods("S1")
+        assert "Runtime.runIfWaitingForDebugger" in sent
+        # Monitoring is enabled BEFORE the worker is allowed to run
+        resume = sent.index("Runtime.runIfWaitingForDebugger")
+        for needed in ("Network.enable", "Runtime.enable", "Debugger.setInstrumentationBreakpoint"):
+            assert sent.index(needed) < resume
+
+    @pytest.mark.asyncio
+    async def test_instrumentation_pause_installs_hooks_then_resumes(self):
+        mon, ws = _monitor()
+        await mon.dispatch(_attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js"))
+        await mon.dispatch(
+            {
+                "method": "Debugger.paused",
+                "sessionId": "S1",
+                "params": {"reason": "instrumentation"},
+            }
+        )
+        tail = ws.methods("S1")[-4:]
+        assert tail == [
+            "Runtime.evaluate",
+            "Debugger.removeBreakpoint",
+            "Debugger.setSkipAllPauses",
+            "Debugger.resume",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_session_resumes_after_primary_then_detaches(self):
+        """Real-Chrome regression: not resuming a duplicate froze the worker."""
+        mon, ws = _monitor()
+        url = f"chrome-extension://{EXT}/sw.js"
+        await mon.dispatch(_attached("S1", "service_worker", url, target_id="T"))
+        await mon.dispatch(_attached("S2", "service_worker", url, target_id="T"))
+        assert ws.methods("S2") == ["Runtime.runIfWaitingForDebugger"]
+        detach = [m for m in ws.sent if m["method"] == "Target.detachFromTarget"]
+        assert detach[-1]["params"]["sessionId"] == "S2"
+        assert list(mon.sessions) == ["S1"]
+
+    @pytest.mark.asyncio
+    async def test_uninteresting_target_is_released(self):
+        mon, ws = _monitor(watch_pages=False)
+        await mon.dispatch(_attached("S9", "page", "https://news.example/"))
+        assert "S9" not in mon.sessions
+        assert ws.methods("S9") == ["Runtime.runIfWaitingForDebugger"]
+
+    @pytest.mark.asyncio
+    async def test_component_extensions_ignored(self):
+        mon, _ = _monitor()
+        url = "chrome-extension://nkeimhogjdpnpccoofpliimaahmaaome/background.html"
+        await mon.dispatch(_attached("S1", "background_page", url))
+        assert mon.sessions == {}
+
+    @pytest.mark.asyncio
+    async def test_forged_hook_report_is_dropped(self):
+        mon, _ = _monitor()
+        await mon.dispatch(_attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js"))
+        entry = mon.sessions["S1"]
+        payload = json.dumps(
+            {"token": "wrong", "kind": "management.uninstall", "data": {"id": "x"}}
+        )
+        await mon.dispatch(
+            {
+                "method": "Runtime.bindingCalled",
+                "sessionId": "S1",
+                "params": {"name": entry["binding"], "payload": payload},
+            }
+        )
+        assert mon.alert_queue.empty()
+        assert mon.stats["forged_reports_dropped"] == 1
+
+        good = json.dumps(
+            {"token": entry["token"], "kind": "management.uninstall", "data": {"id": "x"}}
+        )
+        await mon.dispatch(
+            {
+                "method": "Runtime.bindingCalled",
+                "sessionId": "S1",
+                "params": {"name": entry["binding"], "payload": good},
+            }
+        )
+        alert = mon.alert_queue.get_nowait()
+        assert alert["rule"] == "RULE-05" and alert["extension"]["id"] == EXT
+
+    @pytest.mark.asyncio
+    async def test_content_script_request_is_attributed(self):
+        mon, _ = _monitor()
+        await mon.dispatch(_attached("P1", "page", "https://github.com/", waiting=False))
+        initiator = {
+            "type": "script",
+            "stack": {"callFrames": [{"url": f"chrome-extension://{EXT}/cs.js"}]},
+        }
+        await mon.dispatch(
+            {
+                "method": "Network.requestWillBeSent",
+                "sessionId": "P1",
+                "params": {
+                    "requestId": "r1",
+                    "initiator": initiator,
+                    "request": {
+                        "url": "https://drop.evil.example/c",
+                        "method": "POST",
+                        "postData": COOKIE_DUMP,
+                    },
+                },
+            }
+        )
+        alert = mon.alert_queue.get_nowait()
+        assert alert["rule"] == "RULE-02"
+        assert alert["extension"]["id"] == EXT
+        assert alert["extension"]["context"] == "content_script"
+
+    @pytest.mark.asyncio
+    async def test_page_own_requests_are_ignored(self):
+        mon, _ = _monitor()
+        await mon.dispatch(_attached("P1", "page", "https://site.example/", waiting=False))
+        await mon.dispatch(
+            {
+                "method": "Network.requestWillBeSent",
+                "sessionId": "P1",
+                "params": {
+                    "requestId": "r1",
+                    "initiator": {"type": "script", "url": "https://site.example/app.js"},
+                    "request": {
+                        "url": "https://x.workers.dev/c",
+                        "method": "POST",
+                        "postData": COOKIE_DUMP,
+                    },
+                },
+            }
+        )
+        assert mon.alert_queue.empty()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("extra_first", [True, False])
+    async def test_extra_info_correlates_in_either_order(self, extra_first):
+        mon, _ = _monitor()
+        await mon.dispatch(_attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js"))
+        req = {
+            "method": "Network.requestWillBeSent",
+            "sessionId": "S1",
+            "params": {
+                "requestId": "r7",
+                "request": {"url": "https://api.github.com/user/keys", "method": "POST"},
+            },
+        }
+        extra = {
+            "method": "Network.requestWillBeSentExtraInfo",
+            "sessionId": "S1",
+            "params": {
+                "requestId": "r7",
+                "associatedCookies": [{"blockedReasons": [], "cookie": {}}],
+            },
+        }
+        for msg in (extra, req) if extra_first else (req, extra):
+            await mon.dispatch(msg)
+        rules = []
+        while not mon.alert_queue.empty():
+            a = mon.alert_queue.get_nowait()
+            rules.append((a["rule"], a["severity"]))
+        assert ("RULE-03", "high") in rules

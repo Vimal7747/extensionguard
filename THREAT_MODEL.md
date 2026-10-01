@@ -207,32 +207,38 @@ move the case folder to a WORM volume or push to S3 Object Lock.
 
 ### T6. Privileged actions on the wrong host
 
-**Description:** `extguard-remediate --no-pd-resolve` writes to HKLM on
-Windows. A bug in extension-ID parsing could lead to blocklisting the wrong
-extension, or silent failures could leave a malicious extension running while
-the analyst believes it's blocked.
+**Description:** `extguard-remediate` writes Chrome policy (HKLM on Windows,
+`/etc/opt/chrome/policies` on Linux, an org-unit policy in Workspace). A bad
+extension ID - including `*`, which blocks every extension - or a forged
+approval could block the wrong extension. Silent failures could leave a
+malicious extension running while the analyst believes it's blocked.
 
 **Severity:** Medium — operational risk.
 
 **Mitigations:**
 
-- `chrome_killer.block_extension_windows` uses `winreg` directly (no `os.system`
-  shell-out), so there's no command-injection surface even with a
-  weird extension ID.
-- Idempotent: the writer checks for an existing slot with the same value
-  before adding, so re-running doesn't create duplicate blocklist entries.
-- All registry writes are conditioned on `PermissionError` raising a clear
-  "Re-run as Administrator" message rather than silently no-op'ing.
-- Tests cover the dry-run path on all three platforms; tests on Windows
-  also cover the registry-slot-finding helper (`tests/test_chrome_killer.py`).
-- `--dry-run` mode is supported on every operation, including the cross-platform
-  dispatcher itself.
+- Every ID is validated (`^[a-p]{32}$`) before any policy write; `*` and
+  anything else are refused.
+- Live policy changes need confirmation: the operator types `BLOCK`, or
+  passes `--yes` in automation. A non-interactive run without `--yes` refuses.
+- Dashboard approvals are only executed by `extguard-remediate
+  --process-queue`, and only for a case whose chain of custody verifies with
+  a **valid** signature ("no key on this machine" is not enough). The
+  extension ID comes from the signed case, not from the queue entry. So
+  someone who can write the queue file or plant a case folder can't get a
+  different extension blocked.
+- `chrome_killer` uses `winreg` / file writes directly (no shell-out). The
+  Windows writer enumerates every existing value, so an ID after a gap in the
+  numbering is found (no duplicates, and `unblock` finds it). The Linux
+  writer refuses a corrupt or non-object policy file instead of replacing it,
+  and writes atomically.
+- A failed step makes the run exit 1. A macOS profile that still has to be
+  installed is reported as PARTIAL, not OK.
+- `--dry-run` is supported on every operation.
 
-**Residual risk:** If a malicious extension somehow influences the
-`extension_id` arg (e.g. via a poisoned triage JSON), it could blocklist
-arbitrary extensions. The triage JSON is produced by ExtensionGuard itself,
-so this only matters if an attacker has write access to the triage file —
-in which case they already compromised the SOC machine.
+**Residual risk:** An attacker who holds the chain-of-custody signing key
+and can write to the quarantine folder can still queue a forged case. See
+R9.
 
 ---
 
@@ -332,17 +338,116 @@ deny ExtensionGuard visibility entirely. Detection by absence: if you expect
 to see extensions and `--list-targets` returns nothing, that itself is
 suspicious.
 
+Two more points about the CDP channel:
+
+- **The debugging port is full browser control.** Any local process that
+  can reach it can read every cookie and drive every tab. Run the monitor
+  against a dedicated sandbox profile (`--user-data-dir`), never an everyday
+  one. Recent Chrome refuses remote debugging on the default profile.
+- **Forged alerts.** The in-page hooks report through a randomly named CDP
+  binding with a per-session token. A page or extension that calls the
+  binding without the token is ignored, so it can't flood the SOC with fake
+  RULE-04/05/07 alerts. It can still stay quiet: hooks installed in
+  JavaScript can in principle be detected and avoided by code that runs
+  first. The network rules don't depend on hooks.
+
+---
+
+### T11. Internet-reachable dashboard / webhook
+
+**Description:** In 0.2.0 the GitHub webhook was a route on the dashboard.
+The dashboard has no authentication and can queue remediations, yet GitHub
+needs to reach the webhook from the internet.
+
+**Severity:** High (before the fix).
+
+**Mitigations:**
+
+- The webhook is a separate process (`extguard-webhook`) with two routes
+  (`/webhook/github`, `/healthz`) and no access to cases or the queue. The
+  dashboard stays on 127.0.0.1.
+- HMAC-SHA256 over the raw body (constant-time compare). Delivery IDs are
+  remembered (persisted, bounded) so a captured request can't be replayed.
+  The server refuses to start without a secret. Bodies are size-capped.
+- The sync runs in one background thread, and concurrent pushes collapse
+  into one follow-up. A burst of valid pushes can't pile up syncs.
+- Dashboard approve / reject require the analyst's name, recorded with
+  `REMOTE_USER` when an authenticating proxy sets it. `/api/health` no
+  longer reveals file-system paths.
+
+**Residual risk:** The analyst name is self-asserted - the dashboard still
+has no authentication (R10).
+
+---
+
+### T12. Poisoned threat intel (TTP library)
+
+**Description:** The TTP library is concatenated into Claude's system
+prompt. Anyone who can push to the TTP repo - or steal the webhook secret
+and the repo - can write text that steers every triage.
+
+**Severity:** Medium (was High). Bounded by R2: the AI can only raise a
+verdict, so the realistic abuse is false positives or noise, not hiding a
+malicious extension.
+
+**Mitigations:**
+
+- Syncs are staged in `ttp_library.pending/`. Nothing reaches the prompt
+  until an analyst runs `extguard-ttp-sync --activate`, after `--status`
+  shows what changed. The previous library is kept for rollback.
+  `auto_activate` is an explicit opt-out.
+- Optional `require_verified_commit`: refuse unless GitHub reports the
+  branch head commit as signature-verified.
+- Per-file (256 KB) and total (1 MB) limits at download; per-file and total
+  caps again at load.
+- Download URLs must be on GitHub hosts, so the GitHub token is never sent
+  elsewhere. Paths can't escape the target folder. `delete_orphans` won't
+  run after errors or remove more than half the library.
+- In the prompt, the library is wrapped as reference data with an explicit
+  "not instructions" framing. A closing tag inside it is neutralised.
+
+**Residual risk:** An analyst who activates without reading the diff.
+
+---
+
+### T13. Baseline poisoning (code diff / version velocity)
+
+**Description:** Stage 1e/1f compare each build with the last accepted build
+of the same extension. If a malicious build becomes the reference, the next
+malicious update looks "unchanged".
+
+**Mitigations:**
+
+- HIGH / CRITICAL verdicts never become the baseline. Neither does a scan
+  where Stage 1e / 1f errored.
+- A build whose code changed since the baseline (new endpoints, new
+  sensitive APIs, new obfuscation) is not recorded, whatever its verdict,
+  until an analyst re-scans it with `--accept-baseline`.
+- An update that starts talking to exfil-style hosting is raised to at least
+  HIGH, so it can't be accepted by accident.
+
+**Residual risk:** The first build ever scanned becomes the baseline if it
+scores LOW / MEDIUM. If that first build was already malicious, later diffs
+are relative to malicious code; the absolute findings (exfil endpoints,
+obfuscation, remote code) still score on every scan.
+
 ## Residual risks summary
 
 | # | Risk | Severity | Notes |
 | --- | --- | --- | --- |
-| R1 | Huge CRX files consume RAM linearly | Low | Cap file size before scanning untrusted submissions |
-| R2 | LLM-biased risk score within tool_use schema | Medium | Defence in depth: deterministic local score runs first |
+| R1 | Huge CRX files consume RAM linearly | Low | Input capped at 512 MB, archives at 20k entries / 100 MB per member / 1 GB total (`crx_parser`) |
+| R2 | LLM-biased risk score within tool_use schema | Low | Final score = max(Stage 1, AI): a biased or injected AI score can raise a verdict, never lower it |
 | R3 | Tokens wedged in identifier text aren't redacted | Low | Realistic leak shapes are all caught; documented in code |
 | R4 | Cross-host dedup not shared | Medium | Destination-side dedup (PD `dedup_key`) provides fallback |
 | R5 | Read-modify-write race on version history | Low | Atomic write means no corruption; only lost updates |
 | R6 | Windows file-mode immutability is a no-op | Low | Hash-based tamper detection is the actual control |
 | R7 | Local attacker can bind CDP port first | Low | Detect by absence — empty target list is a signal |
+| R8 | TTP library text reaches Claude's system prompt | Medium | Staged sync + analyst activation, optional signed-commit requirement, size caps, reference-data framing (T12). Bounded by R2 |
+| R9 | Chain-of-custody HMAC key readable by the same OS account | Medium | Proves integrity against anyone without the key. Set `EXTGUARD_COC_KEY` from a secrets manager and ship `.hmac` values to the SIEM for stronger guarantees |
+| R10 | Dashboard has no authentication; analyst name is self-asserted | Medium | Localhost-only by default. Put it behind an authenticating reverse proxy that sets `REMOTE_USER` if more than one person uses it |
+| R11 | Webhook delivery log is bounded (2,000 IDs) | Low | A replay of a delivery older than that re-runs a sync of the current repo state - staged, so still reviewed |
+| R12 | Workspace blocking not exercised against a live Google tenant | Medium (operational) | Request shape follows Google's documented `orgunits:batchModify` format and is unit-tested; verify with `--dry-run` and a test org unit first |
+| R13 | First scanned build becomes the baseline | Low | Absolute code findings still score every scan (T13) |
 
 ## Out of scope
 
@@ -367,3 +472,6 @@ disclosure. We aim to acknowledge within 72 hours.
 | 2026-05 | Logging + secret hygiene pass | T3 |
 | 2026-05 | Code review fixes | T2, T4, T6, T9 |
 | 2026-05 | This document | (cataloguing) |
+| 2026-09 | Review fixes: ID validation, signed CoC, max(Stage 1, AI) verdict | T2, T5, T6 |
+| 2026-09 | Separate webhook server, staged TTP sync, queue consumer, baseline gating, monitor hook tokens | T6, T10, T11, T12, T13 |
+| 2026-09 | P0 review fixes: input limits + schema validation; prompt boundary escaping + max(Stage 1, AI) verdict; HMAC-signed chain of custody; extension-ID validation before policy writes; Slack mrkdwn escaping | T1, T2, T5, T6; R1, R2 |

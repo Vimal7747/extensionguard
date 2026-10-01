@@ -12,7 +12,7 @@ import logging
 
 import pytest
 
-from logging_setup import (
+from extguard.logging_setup import (
     JsonFormatter,
     SecretRedactionFilter,
     redact,
@@ -21,6 +21,27 @@ from logging_setup import (
 # ---------------------------------------------------------------------------
 # Redaction patterns - one test per credential type
 # ---------------------------------------------------------------------------
+
+
+class TestNewRedactionPatterns:
+    @pytest.mark.parametrize(
+        "leak,secret",
+        [
+            ("x-apikey: " + "f" * 64, "f" * 64),
+            ('"api_key": "vt-real-key-1234567890"', "vt-real-key-1234567890"),
+            ("webhook_secret=hunter2hunter2", "hunter2hunter2"),
+            ("EXTGUARD_COC_KEY=abcdef0123456789", "abcdef0123456789"),
+        ],
+    )
+    def test_labelled_secrets(self, leak, secret):
+        from extguard.logging_setup import redact
+
+        assert secret not in redact(leak)
+
+    def test_short_values_left_alone(self):
+        from extguard.logging_setup import redact
+
+        assert redact("password=abc") == "password=abc"  # too short to be a real secret
 
 
 class TestRedactionPatterns:

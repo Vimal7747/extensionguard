@@ -4,6 +4,7 @@
 # logic, not the real Sentinel / Splunk / PagerDuty / Slack APIs.
 
 import base64
+import copy
 import hashlib
 import hmac
 import json
@@ -11,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from adapters import pagerduty, sentinel, slack, splunk
+from extguard.adapters import pagerduty, sentinel, slack, splunk
 
 # ---------------------------------------------------------------------------
 # Sentinel - HMAC-SHA256 signed Log Analytics API
@@ -32,7 +33,9 @@ class TestSentinelAdapter:
     def test_successful_send(self, cfg, sample_alert):
         mock_response = MagicMock()
         mock_response.status_code = 200
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             result = sentinel.send(sample_alert, cfg)
             assert result["ok"] is True
             mock_post.assert_called_once()
@@ -41,7 +44,7 @@ class TestSentinelAdapter:
         mock_response = MagicMock()
         mock_response.status_code = 403
         mock_response.text = "Forbidden"
-        with patch("adapters.http_retry.requests.post", return_value=mock_response):
+        with patch("extguard.adapters.http_retry.requests.post", return_value=mock_response):
             result = sentinel.send(sample_alert, cfg)
             assert result["ok"] is False
             assert "403" in result["error"]
@@ -56,10 +59,10 @@ class TestSentinelAdapter:
 
         with (
             patch(
-                "adapters.http_retry.requests.post",
+                "extguard.adapters.http_retry.requests.post",
                 side_effect=requests.exceptions.ConnectionError("down"),
             ),
-            patch("adapters.http_retry.time.sleep"),
+            patch("extguard.adapters.http_retry.time.sleep"),
         ):
             result = sentinel.send(sample_alert, cfg)
             assert result["ok"] is False
@@ -69,7 +72,9 @@ class TestSentinelAdapter:
         """Sentinel requires Authorization, x-ms-date, Log-Type headers."""
         mock_response = MagicMock()
         mock_response.status_code = 200
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             sentinel.send(sample_alert, cfg)
             call_kwargs = mock_post.call_args.kwargs
             headers = call_kwargs["headers"]
@@ -131,7 +136,7 @@ class TestSplunkAdapter:
         mock_response.status_code = 200
         mock_response.content = b'{"text":"Success","code":0}'
         mock_response.json.return_value = {"text": "Success", "code": 0}
-        with patch("adapters.http_retry.requests.post", return_value=mock_response):
+        with patch("extguard.adapters.http_retry.requests.post", return_value=mock_response):
             result = splunk.send(sample_alert, cfg)
             assert result["ok"] is True
 
@@ -140,7 +145,7 @@ class TestSplunkAdapter:
         mock_response.status_code = 401
         mock_response.content = b'{"text":"Invalid token","code":4}'
         mock_response.json.return_value = {"text": "Invalid token", "code": 4}
-        with patch("adapters.http_retry.requests.post", return_value=mock_response):
+        with patch("extguard.adapters.http_retry.requests.post", return_value=mock_response):
             result = splunk.send(sample_alert, cfg)
             assert result["ok"] is False
             assert "code=4" in result["error"]
@@ -151,7 +156,9 @@ class TestSplunkAdapter:
         mock_response.status_code = 200
         mock_response.content = b'{"text":"Success","code":0}'
         mock_response.json.return_value = {"text": "Success", "code": 0}
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             splunk.send(sample_alert, cfg)
             headers = mock_post.call_args.kwargs["headers"]
             assert headers["Authorization"] == f"Splunk {cfg['hec_token']}"
@@ -162,7 +169,9 @@ class TestSplunkAdapter:
         mock_response.status_code = 200
         mock_response.content = b'{"text":"Success","code":0}'
         mock_response.json.return_value = {"text": "Success", "code": 0}
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             splunk.send(sample_alert, cfg)
             payload = mock_post.call_args.kwargs["json"]
             assert payload["event"] == sample_alert
@@ -197,7 +206,7 @@ class TestPagerDutyAdapter:
         mock_response.status_code = 202
         mock_response.content = b'{"status":"success","dedup_key":"x"}'
         mock_response.json.return_value = {"status": "success", "dedup_key": "x"}
-        with patch("adapters.http_retry.requests.post", return_value=mock_response):
+        with patch("extguard.adapters.http_retry.requests.post", return_value=mock_response):
             result = pagerduty.send(sample_alert, cfg)
             assert result["ok"] is True
             assert "incident_key" in result
@@ -212,7 +221,7 @@ class TestPagerDutyAdapter:
             "mitre": [],
         }
         # Even without mocking, this should not hit the network
-        with patch("adapters.http_retry.requests.post") as mock_post:
+        with patch("extguard.adapters.http_retry.requests.post") as mock_post:
             result = pagerduty.send(low_alert, cfg)
             assert result.get("skipped") is True
             mock_post.assert_not_called()
@@ -223,7 +232,9 @@ class TestPagerDutyAdapter:
         mock_response.status_code = 202
         mock_response.content = b'{"status":"success"}'
         mock_response.json.return_value = {"status": "success"}
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             pagerduty.send(sample_alert, cfg)
             payload = mock_post.call_args.kwargs["json"]
             assert payload["dedup_key"] == f"extguard-RULE-01-{sample_alert['extension']['id']}"
@@ -234,7 +245,9 @@ class TestPagerDutyAdapter:
         mock_response.status_code = 202
         mock_response.content = b'{"status":"success"}'
         mock_response.json.return_value = {"status": "success"}
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             pagerduty.send(sample_alert, cfg)
             payload = mock_post.call_args.kwargs["json"]
             assert payload["payload"]["severity"] == "critical"
@@ -243,12 +256,35 @@ class TestPagerDutyAdapter:
         """The resolve() function should send event_action=resolve."""
         mock_response = MagicMock()
         mock_response.status_code = 202
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             result = pagerduty.resolve("RULE-01", "abc-ext-id", cfg)
             assert result["ok"] is True
             payload = mock_post.call_args.kwargs["json"]
             assert payload["event_action"] == "resolve"
             assert payload["dedup_key"] == "extguard-RULE-01-abc-ext-id"
+
+    def test_acknowledge_keeps_incident_open(self, cfg):
+        mock_response = MagicMock()
+        mock_response.status_code = 202
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
+            assert pagerduty.acknowledge("RULE-01", "x", cfg)["ok"] is True
+            assert mock_post.call_args.kwargs["json"]["event_action"] == "acknowledge"
+
+    def test_resolve_is_retried(self, cfg):
+        """resolve() used a bare requests.post with no retry."""
+        bad, good = MagicMock(status_code=503, text="busy"), MagicMock(status_code=202)
+        with (
+            patch(
+                "extguard.adapters.http_retry.requests.post", side_effect=[bad, good]
+            ) as mock_post,
+            patch("extguard.adapters.http_retry.time.sleep"),
+        ):
+            assert pagerduty.resolve("RULE-01", "x", cfg)["ok"] is True
+            assert mock_post.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +306,7 @@ class TestSlackAdapter:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "ok"
-        with patch("adapters.http_retry.requests.post", return_value=mock_response):
+        with patch("extguard.adapters.http_retry.requests.post", return_value=mock_response):
             result = slack.send(sample_alert, cfg)
             assert result["ok"] is True
 
@@ -284,7 +320,7 @@ class TestSlackAdapter:
             "detail": {"description": "x"},
             "mitre": [],
         }
-        with patch("adapters.http_retry.requests.post") as mock_post:
+        with patch("extguard.adapters.http_retry.requests.post") as mock_post:
             result = slack.send(low_alert, cfg)
             assert result.get("skipped") is True
             mock_post.assert_not_called()
@@ -294,7 +330,9 @@ class TestSlackAdapter:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "ok"
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             slack.send(sample_alert, cfg)
             payload = mock_post.call_args.kwargs["json"]
             assert "attachments" in payload
@@ -306,7 +344,9 @@ class TestSlackAdapter:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "ok"
-        with patch("adapters.http_retry.requests.post", return_value=mock_response) as mock_post:
+        with patch(
+            "extguard.adapters.http_retry.requests.post", return_value=mock_response
+        ) as mock_post:
             slack.send(sample_alert, cfg)
             colour = mock_post.call_args.kwargs["json"]["attachments"][0]["color"]
             assert colour.upper() == "#FF0000"
@@ -316,6 +356,43 @@ class TestSlackAdapter:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.text = "invalid_payload"  # Slack error sentinel
-        with patch("adapters.http_retry.requests.post", return_value=mock_response):
+        with patch("extguard.adapters.http_retry.requests.post", return_value=mock_response):
             result = slack.send(sample_alert, cfg)
             assert result["ok"] is False
+
+
+class TestSlackEscaping:
+    """The extension name/description/URL come from a possibly malicious extension."""
+
+    def _payload_text(self, alert) -> str:
+        return json.dumps(slack._build_message(alert))
+
+    def test_mention_and_disguised_link_are_neutralised(self, sample_alert):
+        """Regression: an extension named like this used to ping the whole SOC
+        channel and show a disguised phishing link."""
+        alert = copy.deepcopy(sample_alert)
+        alert["extension"]["title"] = "<!channel> <https://evil.example|Click to remediate>"
+        alert["detail"]["description"] = "<@U12345> please approve"
+        text = self._payload_text(alert)
+        assert "<!channel>" not in text
+        assert "<https://evil.example|" not in text
+        assert "<@U12345>" not in text
+        assert "&lt;!channel&gt;" in text
+
+    def test_backtick_cannot_escape_code_span(self, sample_alert):
+        alert = copy.deepcopy(sample_alert)
+        alert["detail"]["url"] = "https://x.example/`*bold*`"
+        text = self._payload_text(alert)
+        assert "`*bold*`" not in text
+
+    def test_long_description_is_truncated_not_rejected(self, sample_alert):
+        """Slack rejects sections > 3000 chars; a rejected message = a lost alert."""
+        alert = copy.deepcopy(sample_alert)
+        alert["detail"]["description"] = "A" * 10_000
+        blocks = slack._build_message(alert)["attachments"][0]["blocks"]
+        for block in blocks:
+            text = block.get("text", {}).get("text", "")
+            assert len(text) < 3000
+
+    def test_escape_helper(self):
+        assert slack._slack_escape("a & <b>") == "a &amp; &lt;b&gt;"

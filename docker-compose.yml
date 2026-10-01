@@ -1,12 +1,18 @@
 # docker-compose.yml - ExtensionGuard SOC deployment
 #
-# Three services:
+# Services:
 #   - dashboard:  Flask analyst console at http://localhost:5000
 #   - dispatcher: long-running Stage 4 dispatcher (reads alerts.jsonl, dispatches)
-#   - ttp-sync:   nightly cron-style pull from the configured GitHub TTP repo
+#   - ttp-sync:   nightly pull from the configured GitHub TTP repo (staged for review)
+#   - webhook:    optional GitHub push receiver (profile "webhook")
 #
 # Run with:
 #   docker compose up -d
+#   docker compose --profile webhook up -d        # also start the webhook receiver
+#
+# TTP updates are staged, not live. Review and activate them with:
+#   docker compose exec ttp-sync extguard-ttp-sync --status
+#   docker compose exec ttp-sync extguard-ttp-sync --activate
 #
 # The monitor (Stage 3) is NOT in here because it has to connect to a real
 # Chrome instance via CDP - that's host-bound and best run outside Docker
@@ -27,7 +33,7 @@ services:
       - "127.0.0.1:5000:5000"
     volumes:
       - quarantine:/var/lib/extguard/quarantine
-      - ttp_library:/var/lib/extguard/ttp_library
+      - ttp:/var/lib/extguard/ttp
       - ./extguard.conf.json:/var/lib/extguard/extguard.conf.json:ro
       - ./alerts.jsonl:/var/lib/extguard/alerts.jsonl:ro
     environment:
@@ -74,16 +80,16 @@ services:
 
   # ----------------------------------------------------------------------
   # Nightly TTP library sync. Re-runs extguard-ttp-sync once every 24 hours
-  # to pull the latest threat intel from the configured GitHub repo. The
-  # ttp_library volume is shared with the dashboard so updates are visible
-  # immediately via Claude's next triage call.
+  # to pull the latest threat intel from the configured GitHub repo into
+  # ttp/library.pending. Nothing reaches Claude's prompt until an analyst
+  # runs `extguard-ttp-sync --activate` (see the top of this file).
   # ----------------------------------------------------------------------
   ttp-sync:
     image: extensionguard:0.2.0
     container_name: extguard-ttp-sync
     restart: unless-stopped
     volumes:
-      - ttp_library:/var/lib/extguard/ttp_library
+      - ttp:/var/lib/extguard/ttp
       - ./extguard.conf.json:/var/lib/extguard/extguard.conf.json:ro
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
@@ -93,11 +99,42 @@ services:
     command:
       - |
         while true; do
-          extguard-ttp-sync --target=/var/lib/extguard/ttp_library || true
+          extguard-ttp-sync || true
           sleep 86400
         done
 
-# Named volumes so the quarantine + TTP library survive container restarts.
+  # ----------------------------------------------------------------------
+  # GitHub webhook receiver (optional). Separate from the dashboard because
+  # it must be reachable by GitHub while the dashboard must not be. Publish
+  # it through a TLS reverse proxy or tunnel pointing at 127.0.0.1:8765.
+  # ----------------------------------------------------------------------
+  webhook:
+    image: extensionguard:0.2.0
+    container_name: extguard-webhook
+    restart: unless-stopped
+    profiles: ["webhook"]
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ttp:/var/lib/extguard/ttp
+      - webhook_state:/var/lib/extguard/webhook
+      - ./extguard.conf.json:/var/lib/extguard/extguard.conf.json:ro
+    environment:
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      # Delivery IDs (replay protection) persist in the webhook_state volume
+      - EXTGUARD_HOME=/var/lib/extguard/webhook
+      - EXTGUARD_CONFIG=/var/lib/extguard/extguard.conf.json
+    command: ["extguard-webhook", "--host=0.0.0.0", "--port=8765"]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8765/healthz', timeout=2).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+# Named volumes so the quarantine, TTP library and webhook state survive
+# container restarts.
 volumes:
   quarantine:
-  ttp_library:
+  ttp:
+  webhook_state:

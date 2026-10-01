@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from remediators import forensics
+from extguard.remediators import forensics
 
 # ---------------------------------------------------------------------------
 # Preserve - core happy path
@@ -225,3 +225,130 @@ class TestVerifyCase:
         verify = forensics.verify_case(str(tmp_path))
         assert verify["ok"] is False
         assert "chain_of_custody" in verify["error"]
+
+
+# ---------------------------------------------------------------------------
+# Signed chain of custody (regressions for review harness #10)
+# ---------------------------------------------------------------------------
+
+
+def _preserve(temp_quarantine, manifest):
+    result = forensics.preserve(
+        extension_id="x",
+        extension_name="X",
+        crx_bytes=b"ORIGINAL-SAMPLE",
+        manifest=manifest,
+        quarantine_root=temp_quarantine,
+    )
+    return Path(result["case_dir"])
+
+
+def _swap_sample_and_fix_hash(case_dir: Path):
+    """The attack: replace the sample, then rewrite its hash in the CoC."""
+    (case_dir / "sample.crx").write_bytes(b"ATTACKER-SWAPPED-SAMPLE")
+    coc_path = case_dir / "chain_of_custody.json"
+    coc = json.loads(coc_path.read_text())
+    coc["sha256"]["sample.crx"] = hashlib.sha256(b"ATTACKER-SWAPPED-SAMPLE").hexdigest()
+    coc_path.write_text(json.dumps(coc))
+
+
+class TestSignedCustody:
+    def test_clean_case_signature_is_valid(self, temp_quarantine, benign_manifest_raw):
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        assert (case_dir / "chain_of_custody.json.hmac").exists()
+        assert forensics.verify_case(str(case_dir))["signature"] == "valid"
+
+    def test_sample_swap_with_rewritten_hash_is_detected(
+        self, temp_quarantine, benign_manifest_raw
+    ):
+        """This exact attack used to pass verification (verify_case ok=True)."""
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        _swap_sample_and_fix_hash(case_dir)
+        verify = forensics.verify_case(str(case_dir))
+        assert verify["ok"] is False
+        assert verify["signature"] == "invalid"
+
+    def test_forged_sidecar_still_fails_signature(self, temp_quarantine, benign_manifest_raw):
+        """Recomputing the plain .sha256 sidecar is not enough without the key."""
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        _swap_sample_and_fix_hash(case_dir)
+        new_hash = hashlib.sha256((case_dir / "chain_of_custody.json").read_bytes()).hexdigest()
+        (case_dir / "chain_of_custody.json.sha256").write_text(f"{new_hash}  x\n")
+        verify = forensics.verify_case(str(case_dir))
+        assert verify["ok"] is False
+        assert verify["signature"] == "invalid"
+
+    def test_deleting_the_signature_fails_closed(self, temp_quarantine, benign_manifest_raw):
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        (case_dir / "chain_of_custody.json.hmac").unlink()
+        verify = forensics.verify_case(str(case_dir))
+        assert verify["ok"] is False
+        assert verify["signature"] == "missing"
+
+    def test_no_key_on_this_machine_is_reported(
+        self, temp_quarantine, benign_manifest_raw, monkeypatch
+    ):
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        monkeypatch.delenv("EXTGUARD_COC_KEY")
+        verify = forensics.verify_case(str(case_dir))
+        assert verify["signature"] == "no-key"
+        assert verify["ok"] is True  # artifacts still verified by hash
+
+    def test_key_file_is_created_when_no_env_key(
+        self, temp_quarantine, benign_manifest_raw, monkeypatch
+    ):
+        monkeypatch.delenv("EXTGUARD_COC_KEY")
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        assert forensics.COC_KEY_FILE.exists()  # the temp path from conftest
+        assert forensics.verify_case(str(case_dir))["signature"] == "valid"
+
+    def test_append_refuses_a_tampered_case(self, temp_quarantine, benign_manifest_raw):
+        """Appending must not re-sign (and so launder) a tampered CoC."""
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        _swap_sample_and_fix_hash(case_dir)
+        result = forensics.append_custody_action(str(case_dir), "blocklisted", "op")
+        assert result["ok"] is False
+        assert "failed verification" in result["error"]
+
+    def test_unsafe_file_name_in_coc_is_rejected(self, temp_quarantine, benign_manifest_raw):
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        coc_path = case_dir / "chain_of_custody.json"
+        coc = json.loads(coc_path.read_text())
+        coc["sha256"]["../../outside.txt"] = "0" * 64
+        coc_path.write_text(json.dumps(coc))
+        issues = [m["issue"] for m in forensics.verify_case(str(case_dir))["mismatches"]]
+        assert "unsafe file name in CoC" in issues
+
+    def test_corrupt_coc_is_an_error_not_a_crash(self, temp_quarantine, benign_manifest_raw):
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        (case_dir / "chain_of_custody.json").write_text("{not json")
+        verify = forensics.verify_case(str(case_dir))
+        assert verify["ok"] is False
+        assert "unreadable" in verify["error"]
+
+    def test_tool_version_is_not_hardcoded(self, temp_quarantine, benign_manifest_raw):
+        case_dir = _preserve(temp_quarantine, benign_manifest_raw)
+        coc = json.loads((case_dir / "chain_of_custody.json").read_text())
+        assert coc["tool_version"] != "0.1.0"
+
+    def test_zip_samples_keep_their_extension(self, temp_quarantine, benign_manifest_raw):
+        result = forensics.preserve(
+            extension_id="x",
+            extension_name="X",
+            crx_bytes=b"PK...",
+            manifest=benign_manifest_raw,
+            quarantine_root=temp_quarantine,
+            sample_name="sample.zip",
+        )
+        assert "sample.zip" in result["hashes"]
+
+    def test_unsafe_sample_name_is_refused(self, temp_quarantine, benign_manifest_raw):
+        with pytest.raises(ValueError, match="Unsafe sample"):
+            forensics.preserve(
+                extension_id="x",
+                extension_name="X",
+                crx_bytes=b"a",
+                manifest=benign_manifest_raw,
+                quarantine_root=temp_quarantine,
+                sample_name="../evil.crx",
+            )

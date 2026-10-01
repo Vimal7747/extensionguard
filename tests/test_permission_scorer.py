@@ -2,8 +2,8 @@
 
 import pytest
 
-from models import ManifestInfo
-from permission_scorer import (
+from extguard.models import ManifestInfo
+from extguard.permission_scorer import (
     COMBO_BONUSES,
     PERMISSION_WEIGHTS,
     _score_to_level,
@@ -191,6 +191,109 @@ class TestBackgroundPage:
 
 
 # ---------------------------------------------------------------------------
+# Evasion regressions (review harness #3)
+# ---------------------------------------------------------------------------
+
+
+def _full_manifest(**kw) -> ManifestInfo:
+    base = {
+        "name": "Test",
+        "version": "1.0",
+        "manifest_version": 3,
+        "permissions": [],
+        "host_permissions": [],
+        "content_scripts": [],
+        "background": {},
+        "raw": {},
+    }
+    base.update(kw)
+    return ManifestInfo(**base)
+
+
+class TestEvasion:
+    def test_harness_3_evasive_manifest_is_now_high_or_critical(self):
+        """This manifest scored 20/medium: MV3 'scripting' unweighted, optional
+        <all_urls> ignored, https://github.com/* not matched by exact strings."""
+        m = _full_manifest(
+            permissions=["cookies", "scripting"],
+            host_permissions=["https://github.com/*", "https://*.npmjs.com/*"],
+            content_scripts=[{"matches": ["https://*/*"], "js": ["c.js"]}],
+            optional_host_permissions=["<all_urls>"],
+        )
+        result = score_permissions(m)
+        assert result.risk_level in ("high", "critical")
+        assert "scripting" in result.breakdown
+        assert "content_scripts_all_urls" in result.breakdown  # https://*/* is broad
+        assert "combo:<high-value site access>+cookies" in result.breakdown
+
+    @pytest.mark.parametrize(
+        "pattern",
+        ["https://github.com/*", "*://*.github.com/*", "http://api.github.com/repos/*"],
+    )
+    def test_high_value_hosts_parsed_not_string_matched(self, pattern):
+        result = score_permissions(_full_manifest(host_permissions=[pattern]))
+        assert "high_value_hosts" in result.breakdown
+
+    def test_lookalike_domain_is_not_high_value(self):
+        result = score_permissions(_full_manifest(host_permissions=["https://notgithub.com/*"]))
+        assert "high_value_hosts" not in result.breakdown
+
+    @pytest.mark.parametrize("pattern", ["https://*/*", "http://*/*", "*://*.com/*", "<all_urls>"])
+    def test_broad_patterns(self, pattern):
+        result = score_permissions(_full_manifest(host_permissions=[pattern]))
+        assert any(k.startswith("host:") for k in result.breakdown)
+
+    def test_one_sites_subdomains_are_not_broad(self):
+        result = score_permissions(_full_manifest(host_permissions=["https://*.github.io/*"]))
+        assert not any(k.startswith("host:") for k in result.breakdown)
+
+    def test_optional_permissions_count_at_half_weight(self):
+        result = score_permissions(_full_manifest(optional_permissions=["debugger"]))
+        assert result.breakdown["optional:debugger"] == 18
+        assert "debugger" not in result.breakdown
+
+    def test_combo_completed_by_optional_permission_gets_half_bonus(self):
+        m = _full_manifest(permissions=["cookies", "tabs"], optional_permissions=["storage"])
+        result = score_permissions(m)
+        assert result.breakdown["combo:cookies+storage+tabs"] == 8
+
+    def test_scripting_plus_all_sites(self):
+        m = _full_manifest(permissions=["scripting"], host_permissions=["<all_urls>"])
+        result = score_permissions(m)
+        assert "combo:<all-sites host access>+scripting" in result.breakdown
+
+
+class TestOtherSignals:
+    def test_externally_connectable_all_sites(self):
+        raw = {"externally_connectable": {"matches": ["*://*/*"]}}
+        result = score_permissions(_full_manifest(raw=raw))
+        assert "externally_connectable_all_sites" in result.breakdown
+
+    def test_csp_unsafe_eval_and_remote_script(self):
+        raw = {
+            "content_security_policy": "script-src 'self' 'unsafe-eval' https://cdn.evil.example"
+        }
+        result = score_permissions(_full_manifest(manifest_version=2, raw=raw))
+        assert "csp_unsafe_eval" in result.breakdown
+        assert "csp_remote_script" in result.breakdown
+
+    def test_main_world_content_script(self):
+        cs = [{"matches": ["https://example.com/*"], "world": "MAIN"}]
+        result = score_permissions(_full_manifest(content_scripts=cs))
+        assert "content_scripts_main_world" in result.breakdown
+
+    def test_malformed_manifest_noted(self):
+        result = score_permissions(
+            _full_manifest(parse_warnings=["permissions contained 1 non-string"])
+        )
+        assert "malformed_manifest" in result.breakdown
+
+    def test_malformed_raw_sections_do_not_crash(self):
+        raw = {"externally_connectable": "oops", "content_security_policy": ["x"]}
+        score_permissions(_full_manifest(raw=raw))
+
+
+# ---------------------------------------------------------------------------
 # End-to-end: real fixtures
 # ---------------------------------------------------------------------------
 
@@ -199,7 +302,7 @@ class TestRealManifests:
     """Score the canonical attack fixtures and the benign one."""
 
     def test_teamccp_scores_critical(self, teamccp_manifest_raw):
-        from crx_parser import _build_manifest_info
+        from extguard.crx_parser import _build_manifest_info
 
         manifest = _build_manifest_info(teamccp_manifest_raw)
         result = score_permissions(manifest)
@@ -207,7 +310,7 @@ class TestRealManifests:
         assert result.total_score >= 70
 
     def test_benign_scores_low(self, benign_manifest_raw):
-        from crx_parser import _build_manifest_info
+        from extguard.crx_parser import _build_manifest_info
 
         manifest = _build_manifest_info(benign_manifest_raw)
         result = score_permissions(manifest)
@@ -215,7 +318,7 @@ class TestRealManifests:
         assert result.total_score < 20
 
     def test_shai_hulud_scores_high_or_critical(self, shai_hulud_manifest_raw):
-        from crx_parser import _build_manifest_info
+        from extguard.crx_parser import _build_manifest_info
 
         manifest = _build_manifest_info(shai_hulud_manifest_raw)
         result = score_permissions(manifest)

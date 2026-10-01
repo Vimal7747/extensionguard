@@ -22,15 +22,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from alert_dispatcher import AlertState, enrich
-from crx_parser import _build_manifest_info, parse_crx
-from osv_lookup import _scan_zip_contents
-from permission_scorer import score_permissions
-from publisher_checker import check_publisher
-from remediators import cred_rotation, forensics
-from sigma_generator import generate_all_rules
-from ttp_loader import clear_cache, load_ttp_library
-from update_velocity import analyse_version
+from extguard.alert_dispatcher import AlertState, enrich
+from extguard.crx_parser import _build_manifest_info, parse_crx
+from extguard.osv_lookup import _scan_zip_contents
+from extguard.permission_scorer import score_permissions
+from extguard.publisher_checker import check_publisher
+from extguard.remediators import cred_rotation, forensics
+from extguard.sigma_generator import generate_all_rules
+from extguard.ttp_loader import clear_cache, load_ttp_library
+from extguard.update_velocity import analyse_version
 
 # ---------------------------------------------------------------------------
 # Stage 1a - CRX parsing
@@ -98,7 +98,7 @@ class TestOsvBench:
 class TestVelocityBench:
     def test_analyse_version_first_run(self, benchmark, tmp_path, monkeypatch):
         """First-run cost: parse + write to history file."""
-        import update_velocity
+        from extguard import update_velocity
 
         history_path = tmp_path / "version_history.json"
         monkeypatch.setattr(update_velocity, "HISTORY_FILE", history_path)

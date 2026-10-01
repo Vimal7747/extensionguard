@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from virustotal_lookup import _is_placeholder, _looks_like_sha256, lookup_hash
+from extguard.virustotal_lookup import _is_placeholder, _looks_like_sha256, lookup_hash
 
 # Canonical test hash - SHA-256 of empty string
 EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -74,7 +74,7 @@ class TestLookupHashSuccess:
                 }
             }
         }
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "real-key-12345"})
 
         assert result["ok"] is True
@@ -100,7 +100,7 @@ class TestLookupHashSuccess:
                 }
             }
         }
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["score"] == 10
         assert any("possible false positive" in f for f in result["flags"])
@@ -121,7 +121,7 @@ class TestLookupHashSuccess:
                 }
             }
         }
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["score"] == 20
         assert any("likely malicious" in f for f in result["flags"])
@@ -142,16 +142,39 @@ class TestLookupHashSuccess:
                 }
             }
         }
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["score"] == 30
         assert any("CONFIRMED MALICIOUS" in f for f in result["flags"])
+
+    def test_total_counts_only_real_verdicts(self):
+        """type-unsupported / timeout / failure used to inflate the denominator."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "data": {
+                "attributes": {
+                    "last_analysis_stats": {
+                        "malicious": 3,
+                        "suspicious": 0,
+                        "harmless": 10,
+                        "undetected": 7,
+                        "type-unsupported": 14,
+                        "timeout": 2,
+                        "failure": 1,
+                    }
+                }
+            }
+        }
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
+            result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
+        assert result["total"] == 20
 
     def test_404_means_not_in_vt_database(self):
         """A hash unknown to VT is a valid result, not an error."""
         mock_resp = MagicMock()
         mock_resp.status_code = 404
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["ok"] is True
         assert result["found"] is False
@@ -193,7 +216,7 @@ class TestLookupHashFailures:
     def test_unauthorized_401(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 401
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "bad-key"})
         assert result["ok"] is False
         assert "401" in result["error"]
@@ -201,14 +224,15 @@ class TestLookupHashFailures:
     def test_rate_limit_429(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 429
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["ok"] is False
         assert "rate limit" in result["error"].lower()
 
     def test_timeout_handled(self):
         with patch(
-            "virustotal_lookup.requests.get", side_effect=requests.exceptions.Timeout("slow")
+            "extguard.virustotal_lookup.requests.get",
+            side_effect=requests.exceptions.Timeout("slow"),
         ):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["ok"] is False
@@ -216,7 +240,8 @@ class TestLookupHashFailures:
 
     def test_connection_error_handled(self):
         with patch(
-            "virustotal_lookup.requests.get", side_effect=requests.exceptions.ConnectionError("dns")
+            "extguard.virustotal_lookup.requests.get",
+            side_effect=requests.exceptions.ConnectionError("dns"),
         ):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["ok"] is False
@@ -227,7 +252,7 @@ class TestLookupHashFailures:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"unexpected": "structure"}
-        with patch("virustotal_lookup.requests.get", return_value=mock_resp):
+        with patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp):
             result = lookup_hash(EMPTY_SHA256, cfg={"api_key": "x" * 32})
         assert result["ok"] is False
         assert "shape" in result["error"].lower()
@@ -251,7 +276,7 @@ class TestApiKeyPrecedence:
             mock.status_code = 404
             return mock
 
-        with patch("virustotal_lookup.requests.get", side_effect=_fake_get):
+        with patch("extguard.virustotal_lookup.requests.get", side_effect=_fake_get):
             lookup_hash(EMPTY_SHA256, cfg={"api_key": "config-key-9999"})
 
         # The env var should win
@@ -268,7 +293,7 @@ class TestApiKeyPrecedence:
             mock.status_code = 404
             return mock
 
-        with patch("virustotal_lookup.requests.get", side_effect=_fake_get):
+        with patch("extguard.virustotal_lookup.requests.get", side_effect=_fake_get):
             lookup_hash(EMPTY_SHA256, cfg={"api_key": "config-only-key-12345"})
 
         assert captured_headers["x-apikey"] == "config-only-key-12345"
@@ -287,15 +312,14 @@ class TestOsvIntegration:
         import io
         import zipfile
 
-        from osv_lookup import run_osv_checks
+        from extguard.osv_lookup import run_osv_checks
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", "{}")
 
         with (
-            patch("osv_lookup._query_osv_hash", return_value=[]),
-            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+            patch("extguard.osv_lookup._query_osv_packages_batch", return_value=([], None)),
         ):
             result = run_osv_checks(buf.getvalue(), {}, vt_cfg=None)
 
@@ -305,15 +329,14 @@ class TestOsvIntegration:
         import io
         import zipfile
 
-        from osv_lookup import run_osv_checks
+        from extguard.osv_lookup import run_osv_checks
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("manifest.json", "{}")
 
         with (
-            patch("osv_lookup._query_osv_hash", return_value=[]),
-            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+            patch("extguard.osv_lookup._query_osv_packages_batch", return_value=([], None)),
         ):
             result = run_osv_checks(
                 buf.getvalue(),
@@ -328,7 +351,7 @@ class TestOsvIntegration:
         import io
         import zipfile
 
-        from osv_lookup import run_osv_checks
+        from extguard.osv_lookup import run_osv_checks
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
@@ -350,9 +373,8 @@ class TestOsvIntegration:
             }
         }
         with (
-            patch("osv_lookup._query_osv_hash", return_value=[]),
-            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
-            patch("virustotal_lookup.requests.get", return_value=mock_resp),
+            patch("extguard.osv_lookup._query_osv_packages_batch", return_value=([], None)),
+            patch("extguard.virustotal_lookup.requests.get", return_value=mock_resp),
         ):
             result = run_osv_checks(
                 buf.getvalue(),
