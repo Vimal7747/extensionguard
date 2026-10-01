@@ -3,17 +3,29 @@
 All notable changes to ExtensionGuard. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 versioning follows [SemVer](https://semver.org/).
 
-## [Unreleased] — fixes from the 2026-09-29 review
+## [Unreleased]
 
-Fixes the correctness and safety bugs a full review found in 0.2.0. Several
+## [0.3.0] — 2026-10-01
+
+Fixes the correctness and safety bugs a full review (2026-09-29) found in 0.2.0. Several
 0.2.0 checks reported "clean" while never actually working. All 14 bugs the
 review reproduced are fixed, along with the other High / Medium findings:
 scorer evasion, patch-bump hijacks, a runtime monitor that missed service
 workers, a remediation queue that nothing executed, a public webhook on an
 unauthenticated dashboard, and Sigma rules for log sources that don't exist.
-Contains breaking changes - see below. Suggested version: 0.3.0.
+Contains breaking changes - see below. (While the version is 0.x, breaking
+changes bump the MINOR number, as SemVer allows.)
 
 ### Breaking
+
+- **Evidence from 0.2.0 is unsigned.** Case folders preserved by 0.2.0 have
+  no `chain_of_custody.json.hmac`, so `extguard-remediate --verify-case`
+  reports them as unsigned (exit 1). The dashboard and `--process-queue`
+  refuse to act on them, and new custody entries can't be appended. Their
+  artifact hashes can still be compared by hand against the old
+  `chain_of_custody.json`, but nothing proves that file itself wasn't edited
+  - the 0.2.0 weakness this release fixes. They are deliberately not re-signed
+  automatically, since that would vouch for evidence nobody checked.
 
 - **The GitHub webhook moved to its own server**, `extguard-webhook`. The
   dashboard no longer serves `/webhook/github`: GitHub needs to reach the
@@ -195,7 +207,7 @@ Second round (the rest of the review):
 - `tests/test_live_monitor.py` (opt-in): drives a headless Chrome with a
   throwaway profile and checks that worker hooks fire and RULE-02/04/06 alert.
 - `tests/test_code_diff.py`, `tests/test_remediation.py`,
-  `tests/test_webhook_server.py`; 503 -> 827 tests.
+  `tests/test_webhook_server.py`; 503 -> 829 tests.
 
 ## [0.2.0] — 2026-05-23
 

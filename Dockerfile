@@ -5,11 +5,11 @@
 #   2. runtime - slim image with just the runtime artefacts
 #
 # Build:
-#   docker build -t extensionguard:0.2.0 .
+#   docker build -t extensionguard:0.3.0 .
 #
 # Run individual services:
-#   docker run --rm extensionguard:0.2.0 extguard <crx-or-manifest>
-#   docker run -p 5000:5000 extensionguard:0.2.0 extguard-dashboard --host 0.0.0.0
+#   docker run --rm extensionguard:0.3.0 extguard <crx-or-manifest>
+#   docker run -p 127.0.0.1:5000:5000 extensionguard:0.3.0   # dashboard, localhost only
 #
 # For a full SOC deployment (dashboard + monitor pipe + dispatcher), use the
 # bundled docker-compose.yml which wires up the appropriate networks and
