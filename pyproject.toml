@@ -5,11 +5,8 @@
 #   pip install -e ".[dev]"                # also installs pytest + ruff
 #   python -m build                        # build a wheel for distribution
 #
-# After install you get four console scripts:
-#   extguard          -> main.py            (pre-install scanner)
-#   extguard-monitor  -> behavioral_monitor.py (Stage 3 CDP monitor)
-#   extguard-dispatch -> alert_dispatcher.py   (Stage 4 alert pipeline)
-#   extguard-remediate -> remediation.py       (Stage 5 IR orchestrator)
+# All code lives in the `extguard` package. After install you get seven
+# console scripts (see [project.scripts]) plus `python -m extguard`.
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -69,21 +66,21 @@ workspace = [
 
 
 [project.urls]
-# Update these once the repo is published
-Homepage = "https://github.com/example/extensionguard"
-Issues   = "https://github.com/example/extensionguard/issues"
+Homepage = "https://github.com/Vimal7747/extensionguard"
+Issues   = "https://github.com/Vimal7747/extensionguard/issues"
 
 
 # Console scripts - what `pip install` adds to the user's PATH.
 # Each entry: command_name = "module_path:function_name"
 [project.scripts]
-extguard           = "main:main"
-extguard-monitor   = "behavioral_monitor:main"
-extguard-dispatch  = "alert_dispatcher:main"
-extguard-remediate = "remediation:main"
-extguard-dashboard = "dashboard:main"
-extguard-ttp-sync  = "ttp_ingestor:main"
-extguard-sigma     = "sigma_generator:main"
+extguard           = "extguard.main:main"
+extguard-monitor   = "extguard.behavioral_monitor:main"
+extguard-dispatch  = "extguard.alert_dispatcher:main"
+extguard-remediate = "extguard.remediation:main"
+extguard-dashboard = "extguard.dashboard:main"
+extguard-ttp-sync  = "extguard.ttp_ingestor:main"
+extguard-webhook   = "extguard.webhook_server:main"
+extguard-sigma     = "extguard.sigma_generator:main"
 
 
 # ---------------------------------------------------------------------------
@@ -91,36 +88,22 @@ extguard-sigma     = "sigma_generator:main"
 # ---------------------------------------------------------------------------
 
 [tool.setuptools]
-# Top-level Python modules to ship (one entry per .py file in the project root)
-py-modules = [
-    "main",
-    "models",
-    "crx_parser",
-    "permission_scorer",
-    "publisher_checker",
-    "osv_lookup",
-    "virustotal_lookup",
-    "update_velocity",
-    "claude_triage",
-    "behavioral_monitor",
-    "alert_dispatcher",
-    "remediation",
-    "config_schema",
-    "logging_setup",
-    "dashboard",
-    "ttp_loader",
-    "ttp_ingestor",
-    "sigma_generator",
-]
-
-# Sub-packages (directories with __init__.py)
-packages = ["adapters", "remediators"]
+# One namespaced package. (v0.2.0 shipped 18 top-level modules named `main`,
+# `models`, `dashboard`... straight into site-packages, where they collide
+# with anything else of the same name.)
+packages = ["extguard", "extguard.adapters", "extguard.remediators"]
 
 
-# Include the default config template + threat-intelligence fixtures +
-# dashboard templates/static files in the wheel.
+# Non-Python files that must be inside the wheel. package-data only applies
+# to packages, which is why v0.2.0's wheel shipped WITHOUT the dashboard
+# templates and the TTP library (it had no package for them to belong to).
 [tool.setuptools.package-data]
-"*" = ["*.json", "*.md", "dashboard_templates/*.html", "dashboard_static/*.css"]
+extguard = [
+    "dashboard_templates/*.html",
+    "dashboard_static/*",
+    "ttp_library/*.md",
+    "ttp_library/**/*.md",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +149,10 @@ ignore = [
 ]
 
 
+[tool.ruff.lint.isort]
+known-first-party = ["extguard"]
+
+
 [tool.ruff.lint.per-file-ignores]
 # Test files can have longer functions and unused imports for fixtures
 "tests/*.py" = ["E501", "F401", "F811"]
@@ -179,17 +166,5 @@ quote-style    = "double"
 indent-style   = "space"
 
 
-# ---------------------------------------------------------------------------
-# pytest - test runner config (mirrored from pytest.ini for completeness)
-# ---------------------------------------------------------------------------
-
-[tool.pytest.ini_options]
-testpaths       = ["tests"]
-python_files    = ["test_*.py"]
-python_classes  = ["Test*"]
-python_functions = ["test_*"]
-addopts         = "--tb=short -v"
-filterwarnings  = [
-    "error",
-    "ignore::DeprecationWarning:websockets.*",
-]
+# pytest is configured in pytest.ini (single source of truth - do NOT mirror
+# it here; pytest.ini takes precedence and a partial copy silently drifts).

@@ -32,12 +32,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # when only test files change.
 COPY pyproject.toml ./
 COPY README.md LICENSE ./
-COPY *.py ./
-COPY adapters/ ./adapters/
-COPY remediators/ ./remediators/
-COPY dashboard_templates/ ./dashboard_templates/
-COPY dashboard_static/ ./dashboard_static/
-COPY ttp_library/ ./ttp_library/
+# The whole package - code, dashboard templates/static and the baseline TTP
+# library all live under extguard/ and are declared as package data
+COPY extguard/ ./extguard/
 
 RUN pip install --no-cache-dir build && python -m build --wheel
 
@@ -64,7 +61,8 @@ RUN pip install --no-cache-dir /tmp/*.whl && rm /tmp/*.whl
 # volume mounts have a stable target. Owned by the extguard user so writes
 # work without root.
 RUN mkdir -p /var/lib/extguard/quarantine \
- && mkdir -p /var/lib/extguard/ttp_library \
+ && mkdir -p /var/lib/extguard/ttp/library \
+ && mkdir -p /var/lib/extguard/webhook \
  && chown -R extguard:extguard /var/lib/extguard
 
 # Run as non-root for everything below this line.
@@ -72,7 +70,14 @@ USER extguard
 WORKDIR /var/lib/extguard
 
 # Environment defaults that work out of the box. Override at run time.
-ENV EXTGUARD_LOG_LEVEL=INFO \
+# EXTGUARD_HOME makes every tool agree on the data directory: config
+# (extguard.conf.json), quarantine/ and the remediation queue.
+# EXTGUARD_TTP_DIR puts the active library AND its pending copy
+# (ttp/library.pending) inside one volume, so a staged sync can be reviewed
+# and activated across container restarts.
+ENV EXTGUARD_HOME=/var/lib/extguard \
+    EXTGUARD_TTP_DIR=/var/lib/extguard/ttp/library \
+    EXTGUARD_LOG_LEVEL=INFO \
     EXTGUARD_LOG_JSON=1 \
     PYTHONUNBUFFERED=1
 

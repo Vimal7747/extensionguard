@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from dashboard import CASE_ID_PATTERN, create_app
-from remediators import forensics
+from extguard.dashboard import CASE_ID_PATTERN, create_app
+from extguard.remediators import forensics
 
 # ---------------------------------------------------------------------------
 # Shared test scaffolding
@@ -112,6 +112,7 @@ class TestCaseIdValidation:
             "20260101-000000-deadbeef; rm -rf /",
             "20260101-000000-deadbeef$(id)",  # command injection attempt
             "..deadbeef",  # leading dots
+            "20260101-000000-deadbeef\n",  # `$` would allow a trailing newline
             "",
         ],
     )
@@ -210,6 +211,12 @@ class TestApis:
         assert data["status"] == "ok"
         assert "cases" in data
 
+    def test_health_does_not_leak_paths(self, client, quarantine_dir):
+        text = client.get("/api/health").get_data(as_text=True)
+        assert "quarantine_root" not in text
+        assert str(quarantine_dir.name) not in text
+        assert '"root"' not in text
+
     def test_cases_api(self, client, real_case):
         resp = client.get("/api/cases")
         data = resp.get_json()
@@ -226,6 +233,14 @@ class TestApis:
         assert len(data) == 3
         # Newest first
         assert data[0]["rule"] == "R-4"
+
+    def test_alerts_api_reads_the_end_of_a_large_log(self, client, alerts_log):
+        """The tail is read backwards in blocks - check across block boundaries."""
+        with alerts_log.open("w") as f:
+            for i in range(20000):
+                f.write(json.dumps({"rule": f"R-{i}", "pad": "x" * 50}) + "\n")
+        data = client.get("/api/alerts?limit=5").get_json()
+        assert [a["rule"] for a in data] == [f"R-{i}" for i in range(19999, 19994, -1)]
 
     def test_alerts_api_handles_malformed_lines(self, client, alerts_log):
         alerts_log.write_text('not json\n{"rule": "R-1", "severity": "high"}\nalso not json\n')
@@ -280,7 +295,12 @@ class TestRemediationQueue:
 
         resp = client.post(
             f"/case/{real_case.name}/approve",
-            data={"_csrf": csrf, "action": "kill", "notes": "confirmed beacon"},
+            data={
+                "_csrf": csrf,
+                "action": "kill",
+                "notes": "confirmed beacon",
+                "analyst": "Priya N",
+            },
         )
         assert resp.status_code == 302  # redirect back to case page
 
@@ -291,6 +311,9 @@ class TestRemediationQueue:
         assert entries[0]["decision"] == "approve"
         assert entries[0]["action"] == "kill"
         assert entries[0]["notes"] == "confirmed beacon"
+        # The analyst who clicked, not the server's OS account
+        assert entries[0]["actor"] == "Priya N"
+        assert "server_account" in entries[0]
 
     def test_reject_writes_queue_entry(self, client, real_case, queue_file):
         resp = client.get(f"/case/{real_case.name}")
@@ -298,7 +321,7 @@ class TestRemediationQueue:
 
         client.post(
             f"/case/{real_case.name}/reject",
-            data={"_csrf": csrf, "notes": "false positive - legit extension"},
+            data={"_csrf": csrf, "notes": "false positive - legit extension", "analyst": "Sam"},
         )
         entries = [json.loads(line) for line in queue_file.read_text().splitlines() if line.strip()]
         assert entries[0]["decision"] == "reject"
@@ -309,7 +332,7 @@ class TestRemediationQueue:
 
         resp = client.post(
             f"/case/{real_case.name}/approve",
-            data={"_csrf": csrf, "action": "DROP_TABLE_users"},
+            data={"_csrf": csrf, "action": "DROP_TABLE_users", "analyst": "Sam"},
         )
         assert resp.status_code == 400
 
@@ -319,11 +342,49 @@ class TestRemediationQueue:
 
         client.post(
             f"/case/{real_case.name}/approve",
-            data={"_csrf": csrf, "action": "kill", "notes": "test note"},
+            data={"_csrf": csrf, "action": "kill", "notes": "test note", "analyst": "Priya N"},
         )
         coc = json.loads((real_case / "chain_of_custody.json").read_text())
         actions = [e["action"] for e in coc["custody_log"]]
         assert "dashboard_approve_kill" in actions
+        assert coc["custody_log"][-1]["actor"].startswith("Priya N")
+
+    @pytest.mark.parametrize("analyst", ["", "   ", "x" * 65, "<script>", "a\nb"])
+    def test_approve_requires_a_valid_analyst_name(self, client, real_case, queue_file, analyst):
+        resp = client.get(f"/case/{real_case.name}")
+        csrf = re.search(rb'name="_csrf" value="([^"]+)"', resp.data).group(1).decode()
+
+        resp = client.post(
+            f"/case/{real_case.name}/approve",
+            data={"_csrf": csrf, "action": "kill", "analyst": analyst},
+        )
+        assert resp.status_code == 400
+        assert not queue_file.exists()
+
+    def test_remote_user_recorded_when_proxy_sets_it(self, client, real_case, queue_file):
+        resp = client.get(f"/case/{real_case.name}")
+        csrf = re.search(rb'name="_csrf" value="([^"]+)"', resp.data).group(1).decode()
+
+        client.post(
+            f"/case/{real_case.name}/reject",
+            data={"_csrf": csrf, "analyst": "Sam"},
+            environ_base={"REMOTE_USER": "sam@corp.example"},
+        )
+        entry = json.loads(queue_file.read_text().splitlines()[0])
+        assert entry["remote_user"] == "sam@corp.example"
+
+    def test_tampered_case_is_not_queued(self, client, real_case, queue_file):
+        resp = client.get(f"/case/{real_case.name}")
+        csrf = re.search(rb'name="_csrf" value="([^"]+)"', resp.data).group(1).decode()
+        coc_path = real_case / "chain_of_custody.json"
+        coc_path.write_text(coc_path.read_text().replace("Test Extension", "Other"))
+
+        resp = client.post(
+            f"/case/{real_case.name}/approve",
+            data={"_csrf": csrf, "action": "kill", "analyst": "Sam"},
+        )
+        assert resp.status_code == 409
+        assert not queue_file.exists()
 
 
 # ---------------------------------------------------------------------------

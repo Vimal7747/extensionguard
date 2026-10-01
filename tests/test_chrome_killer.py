@@ -11,7 +11,13 @@ from unittest.mock import patch
 
 import pytest
 
-from remediators import chrome_killer
+from extguard.remediators import chrome_killer
+
+# Valid-format IDs (32 letters a-p). The old fixture 'abcdefghijklmnopqrstuvwxyzabcdef'
+# was not a legal Chrome ID - it contains q-z.
+EXT_ID = "ngcnfhbdhbbhajagjfmnfgbbfgkfljhf"
+EXT_ID_2 = "a" * 32
+EXT_ID_3 = "p" * 32
 
 # ---------------------------------------------------------------------------
 # Cross-platform dispatcher
@@ -21,29 +27,29 @@ from remediators import chrome_killer
 class TestDispatcher:
     def test_dispatcher_picks_windows(self):
         """On Windows, block_extension should route to block_extension_windows."""
-        with patch("remediators.chrome_killer.platform.system", return_value="Windows"):
-            with patch("remediators.chrome_killer.block_extension_windows") as mock_win:
+        with patch("extguard.remediators.chrome_killer.platform.system", return_value="Windows"):
+            with patch("extguard.remediators.chrome_killer.block_extension_windows") as mock_win:
                 mock_win.return_value = {"ok": True}
-                chrome_killer.block_extension("abc", dry_run=True)
+                chrome_killer.block_extension(EXT_ID, dry_run=True)
                 mock_win.assert_called_once()
 
     def test_dispatcher_picks_linux(self):
-        with patch("remediators.chrome_killer.platform.system", return_value="Linux"):
-            with patch("remediators.chrome_killer.block_extension_linux") as mock_linux:
+        with patch("extguard.remediators.chrome_killer.platform.system", return_value="Linux"):
+            with patch("extguard.remediators.chrome_killer.block_extension_linux") as mock_linux:
                 mock_linux.return_value = {"ok": True}
-                chrome_killer.block_extension("abc", dry_run=True)
+                chrome_killer.block_extension(EXT_ID, dry_run=True)
                 mock_linux.assert_called_once()
 
     def test_dispatcher_picks_macos(self):
-        with patch("remediators.chrome_killer.platform.system", return_value="Darwin"):
-            with patch("remediators.chrome_killer.block_extension_macos") as mock_mac:
+        with patch("extguard.remediators.chrome_killer.platform.system", return_value="Darwin"):
+            with patch("extguard.remediators.chrome_killer.block_extension_macos") as mock_mac:
                 mock_mac.return_value = {"ok": True}
-                chrome_killer.block_extension("abc", dry_run=True)
+                chrome_killer.block_extension(EXT_ID, dry_run=True)
                 mock_mac.assert_called_once()
 
     def test_unsupported_platform_returns_error(self):
-        with patch("remediators.chrome_killer.platform.system", return_value="Plan9"):
-            result = chrome_killer.block_extension("abc", dry_run=True)
+        with patch("extguard.remediators.chrome_killer.platform.system", return_value="Plan9"):
+            result = chrome_killer.block_extension(EXT_ID, dry_run=True)
             assert result["ok"] is False
             assert "Unsupported platform" in result["error"]
 
@@ -58,7 +64,7 @@ class TestDryRun:
 
     def test_windows_dry_run_does_not_import_winreg(self):
         """Dry-run path returns before importing winreg, so it works on Linux too."""
-        result = chrome_killer.block_extension_windows("abc", dry_run=True)
+        result = chrome_killer.block_extension_windows(EXT_ID, dry_run=True)
         assert result["ok"] is True
         assert result["details"]["dry_run"] is True
         assert "would write" in result["details"]["note"].lower()
@@ -69,28 +75,26 @@ class TestDryRun:
         # never even try to write
         fake_policy = tmp_path / "nonexistent" / "policy.json"
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", fake_policy)
-        result = chrome_killer.block_extension_linux("abc", dry_run=True)
+        result = chrome_killer.block_extension_linux(EXT_ID, dry_run=True)
         assert result["ok"] is True
         assert result["details"]["dry_run"] is True
         # File must NOT have been created
         assert not fake_policy.exists()
 
-    def test_macos_dry_run_does_not_shell_out(self):
-        """Dry-run path must not invoke subprocess."""
-        with patch("remediators.chrome_killer.subprocess.run") as mock_run:
-            result = chrome_killer.block_extension_macos("abc", dry_run=True)
-            assert result["ok"] is True
-            mock_run.assert_not_called()
+    def test_macos_dry_run_writes_nothing(self, tmp_path):
+        result = chrome_killer.block_extension_macos(EXT_ID, dry_run=True, output_dir=tmp_path)
+        assert result["ok"] is True
+        assert list(tmp_path.iterdir()) == []
 
     def test_workspace_missing_config_returns_error(self):
         """Without service_account_json or customer_id, surface a clear error."""
-        result = chrome_killer.block_extension_workspace("abc", "/", cfg={})
+        result = chrome_killer.block_extension_workspace(EXT_ID, "/", cfg={})
         assert result["ok"] is False
         assert "service_account_json" in result["error"]
 
     def test_workspace_missing_customer_id_returns_error(self):
         result = chrome_killer.block_extension_workspace(
-            "abc", "/", cfg={"service_account_json": "/tmp/sa.json"}
+            EXT_ID, "/", cfg={"service_account_json": "/tmp/sa.json"}
         )
         assert result["ok"] is False
         assert "customer_id" in result["error"]
@@ -111,29 +115,54 @@ class TestWorkspaceImpl:
         sa = tmp_path / "sa.json"
         sa.write_text("{}")
         result = chrome_killer.block_extension_workspace(
-            "abcdefghijklmnopqrstuvwxyzabcdef",
+            EXT_ID,
             "/Engineering",
             cfg={
                 "service_account_json": str(sa),
                 "customer_id": "C01abc123",
+                "admin_email": "admin@example.com",
             },
             dry_run=True,
         )
         assert result["ok"] is True
         assert result["details"]["dry_run"] is True
-        assert "abcdefghijklmnopqrstuvwxyzabcdef" in result["details"]["note"]
+        assert EXT_ID in result["details"]["note"]
         assert "C01abc123" in result["details"]["note"]
+
+    def test_request_matches_googles_documented_shape(self):
+        """Per Google's 'Code samples for app policies' (Chrome Policy API).
+        The old request used schema chrome.users.apps.ManagedInstall, an org-unit
+        PATH as targetResource, and put appId in the value - none of which the
+        API accepts."""
+        body = chrome_killer.build_workspace_request(EXT_ID, "03ph8a2z1xyz")
+        req = body["requests"][0]
+        assert req["policyTargetKey"] == {
+            "targetResource": "orgunits/03ph8a2z1xyz",
+            "additionalTargetKeys": {"app_id": f"chrome:{EXT_ID}"},
+        }
+        assert req["policyValue"] == {
+            "policySchema": "chrome.users.apps.InstallType",
+            "value": {"appInstallType": "BLOCKED"},
+        }
+        assert req["updateMask"] == {"paths": "appInstallType"}
+
+    def test_admin_email_is_required(self, tmp_path):
+        """A service account needs an admin to impersonate (domain-wide delegation)."""
+        cfg = {"service_account_json": "sa.json", "customer_id": "C01"}
+        result = chrome_killer.block_extension_workspace(EXT_ID, "/", cfg, dry_run=True)
+        assert "admin_email" in result["error"]
 
     def test_missing_service_account_file_returns_clear_error(self, tmp_path):
         """If the SA path is set but the file doesn't exist, say so."""
         # We need to skip the dry-run path AND get past the early config checks
         # Pass a nonexistent path so the real code does the file check
         result = chrome_killer.block_extension_workspace(
-            "abc",
+            EXT_ID,
             "/",
             cfg={
                 "service_account_json": str(tmp_path / "missing.json"),
                 "customer_id": "C01",
+                "admin_email": "admin@example.com",
             },
         )
         assert result["ok"] is False
@@ -159,24 +188,24 @@ class TestLinuxPolicyFile:
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", policy_file)
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_DIR", tmp_path)
 
-        result = chrome_killer.block_extension_linux("abcd-ext-id", dry_run=False)
+        result = chrome_killer.block_extension_linux(EXT_ID, dry_run=False)
         assert result["ok"] is True
         assert policy_file.exists()
 
         data = json.loads(policy_file.read_text())
-        assert "abcd-ext-id" in data["ExtensionInstallBlocklist"]
+        assert EXT_ID in data["ExtensionInstallBlocklist"]
 
     def test_appends_to_existing_policy_file(self, tmp_path, monkeypatch):
         policy_file = tmp_path / "test_policy.json"
-        policy_file.write_text(json.dumps({"ExtensionInstallBlocklist": ["pre-existing-id"]}))
+        policy_file.write_text(json.dumps({"ExtensionInstallBlocklist": [EXT_ID_3]}))
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", policy_file)
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_DIR", tmp_path)
 
-        chrome_killer.block_extension_linux("new-id", dry_run=False)
+        chrome_killer.block_extension_linux(EXT_ID_2, dry_run=False)
 
         data = json.loads(policy_file.read_text())
-        assert "pre-existing-id" in data["ExtensionInstallBlocklist"]
-        assert "new-id" in data["ExtensionInstallBlocklist"]
+        assert EXT_ID_3 in data["ExtensionInstallBlocklist"]
+        assert EXT_ID_2 in data["ExtensionInstallBlocklist"]
 
     def test_does_not_duplicate_ids(self, tmp_path, monkeypatch):
         """Adding the same ID twice should not create duplicate entries."""
@@ -184,11 +213,79 @@ class TestLinuxPolicyFile:
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", policy_file)
         monkeypatch.setattr(chrome_killer, "LINUX_POLICY_DIR", tmp_path)
 
-        chrome_killer.block_extension_linux("dup-id", dry_run=False)
-        chrome_killer.block_extension_linux("dup-id", dry_run=False)
+        chrome_killer.block_extension_linux(EXT_ID, dry_run=False)
+        chrome_killer.block_extension_linux(EXT_ID, dry_run=False)
 
         data = json.loads(policy_file.read_text())
-        assert data["ExtensionInstallBlocklist"].count("dup-id") == 1
+        assert data["ExtensionInstallBlocklist"].count(EXT_ID) == 1
+
+    def test_corrupt_policy_file_is_not_overwritten(self, tmp_path, monkeypatch):
+        """The old code replaced an unreadable file, silently dropping its entries."""
+        policy_file = tmp_path / "test_policy.json"
+        policy_file.write_text("{ this is not json, but has other admins' entries")
+        monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", policy_file)
+        monkeypatch.setattr(chrome_killer, "LINUX_POLICY_DIR", tmp_path)
+        result = chrome_killer.block_extension_linux(EXT_ID)
+        assert result["ok"] is False
+        assert "not valid JSON" in result["error"]
+        assert "other admins' entries" in policy_file.read_text()
+
+    def test_write_leaves_no_temp_files(self, tmp_path, monkeypatch):
+        policy_file = tmp_path / "test_policy.json"
+        monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", policy_file)
+        monkeypatch.setattr(chrome_killer, "LINUX_POLICY_DIR", tmp_path)
+        chrome_killer.block_extension_linux(EXT_ID)
+        assert [p.name for p in tmp_path.iterdir()] == ["test_policy.json"]
+
+
+class TestMacosProfile:
+    def test_profile_contains_the_blocklist(self, tmp_path):
+        import plistlib
+
+        result = chrome_killer.block_extension_macos(EXT_ID, output_dir=tmp_path)
+        assert result["ok"] is True
+        # Honest result: the profile still has to be deployed
+        assert result["applied"] is False
+        profile = plistlib.loads(Path(result["details"]["profile_path"]).read_bytes())
+        payload = profile["PayloadContent"][0]
+        assert payload["PayloadType"] == "com.google.Chrome"
+        assert payload["ExtensionInstallBlocklist"] == [EXT_ID]
+
+
+# ---------------------------------------------------------------------------
+# Extension-ID validation - nothing malformed may reach a policy store
+# ---------------------------------------------------------------------------
+
+BAD_IDS = ["*", "abc", "ABCDEFGHIJKLMNOPABCDEFGHIJKLMNOP", "q" * 32, "a" * 31, "", None]
+
+
+class TestIdValidation:
+    @pytest.mark.parametrize("bad_id", BAD_IDS)
+    @pytest.mark.parametrize(
+        "block",
+        [
+            chrome_killer.block_extension_windows,
+            chrome_killer.block_extension_linux,
+            chrome_killer.block_extension_macos,
+            chrome_killer.unblock_extension_windows,
+        ],
+    )
+    def test_invalid_ids_are_refused(self, block, bad_id):
+        result = block(bad_id, dry_run=True)
+        assert result["ok"] is False
+        assert "Invalid extension ID" in result["error"]
+
+    def test_wildcard_never_reaches_the_linux_policy_file(self, tmp_path, monkeypatch):
+        """'*' in ExtensionInstallBlocklist would block every extension."""
+        policy_file = tmp_path / "policy.json"
+        monkeypatch.setattr(chrome_killer, "LINUX_POLICY_FILE", policy_file)
+        monkeypatch.setattr(chrome_killer, "LINUX_POLICY_DIR", tmp_path)
+        assert chrome_killer.block_extension_linux("*", dry_run=False)["ok"] is False
+        assert not policy_file.exists()
+
+    def test_workspace_refuses_invalid_id(self):
+        result = chrome_killer.block_extension_workspace("*", "/", cfg={}, dry_run=True)
+        assert "Invalid extension ID" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -215,3 +312,16 @@ class TestWindowsHelpers:
         with patch("winreg.QueryValueEx", side_effect=FileNotFoundError()):
             slot = chrome_killer._find_next_free_slot(fake_key)
             assert slot == 1
+
+    def test_existing_id_found_after_a_gap(self):
+        """Slots 1, 2, 4 (3 deleted): the old probe stopped at 3 and missed 4."""
+        values = [("1", "a" * 32, 1), ("2", "b" * 32, 1), ("4", EXT_ID, 1)]
+
+        def enum(_key, index):
+            if index >= len(values):
+                raise OSError("no more data")
+            return values[index]
+
+        with patch("winreg.EnumValue", side_effect=enum):
+            assert chrome_killer._find_existing_slot(object(), EXT_ID) == 4
+            assert chrome_killer._find_existing_slot(object(), "p" * 32) is None

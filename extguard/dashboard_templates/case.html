@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block title %}Case {{ case_id }} | ExtensionGuard{% endblock %}
+
+{% block content %}
+<nav class="breadcrumb">
+  <a href="{{ url_for('index') }}">&laquo; All cases</a>
+</nav>
+
+<h2>Case {{ case_id }}</h2>
+
+<section class="panel">
+  <h3>Extension</h3>
+  <dl>
+    <dt>Name</dt><dd>{{ coc.extension.name or '—' }}</dd>
+    <dt>ID</dt><dd><code>{{ coc.extension.id or '—' }}</code></dd>
+    <dt>Manifest version</dt><dd>MV{{ coc.extension.manifest_version or '?' }}</dd>
+    <dt>Claimed version</dt><dd>{{ coc.extension.claimed_version or '—' }}</dd>
+    <dt>Preserved at</dt><dd><time>{{ coc.preserved_at }}</time></dd>
+    <dt>Operator</dt><dd>{{ coc.operator }} on {{ coc.operator_host }}</dd>
+  </dl>
+</section>
+
+{% if triage %}
+<section class="panel">
+  <h3>AI triage</h3>
+  <p>
+    <strong class="severity severity-{{ triage.risk_level }}">{{ triage.risk_level|upper }}</strong>
+    &middot; Score: {{ triage.final_score or triage.ai_risk_score or triage.composite_score }}/100
+  </p>
+  {% if triage.mitre_techniques %}
+    <p><strong>MITRE:</strong>
+      {% for t in triage.mitre_techniques %}<code>{{ t }}</code> {% endfor %}
+    </p>
+  {% endif %}
+  {% if triage.iocs %}
+    <details>
+      <summary>{{ triage.iocs|length }} IOC(s)</summary>
+      <ul>{% for ioc in triage.iocs %}<li>{{ ioc }}</li>{% endfor %}</ul>
+    </details>
+  {% endif %}
+  {% if triage.analyst_narrative %}
+    <details open>
+      <summary>Analyst narrative</summary>
+      <pre class="narrative">{{ triage.analyst_narrative }}</pre>
+    </details>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="panel">
+  <h3>Chain of custody</h3>
+  <ol class="custody">
+    {% for entry in coc.custody_log %}
+    <li>
+      <time>{{ entry.timestamp }}</time>
+      &middot; <strong>{{ entry.action }}</strong>
+      by <code>{{ entry.actor }}</code> on <code>{{ entry.host }}</code>
+      {% if entry.notes %}<p class="muted">{{ entry.notes }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+
+<section class="panel">
+  <h3>Artifacts &amp; integrity</h3>
+  <table class="hashes">
+    <thead><tr><th>File</th><th>SHA-256</th></tr></thead>
+    <tbody>
+      {% for filename, h in coc.sha256.items() %}
+      <tr><td><code>{{ filename }}</code></td><td class="hash">{{ h }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <form method="post" action="{{ url_for('verify', case_id=case_id) }}" style="margin-top: 1em;">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <button type="submit" class="btn btn-secondary">Re-verify integrity</button>
+  </form>
+</section>
+
+{% if playbook_md %}
+<section class="panel">
+  <h3>Credential rotation playbook</h3>
+  <details>
+    <summary>Open playbook ({{ playbook_md|length }} chars)</summary>
+    <pre class="narrative">{{ playbook_md }}</pre>
+  </details>
+</section>
+{% endif %}
+
+<section class="panel actions">
+  <h3>Remediation decision</h3>
+  <p class="muted">
+    These actions don't directly modify Chrome policy &mdash; they enqueue a
+    request that <code>extguard-remediate --process-queue</code> executes.
+    Your name is recorded in the queue and the chain of custody.
+  </p>
+
+  <form method="post"
+        action="{{ url_for('approve', case_id=case_id) }}"
+        onsubmit="return confirm('Approve remediation for this case? This will queue a kill action for the remediation CLI to execute.')">
+    <input type="hidden" name="_csrf"   value="{{ csrf_token }}">
+    <input type="hidden" name="action"  value="kill">
+    <label>Your name:
+      <input type="text" name="analyst" required maxlength="64" autocomplete="name">
+    </label>
+    <label>Notes (optional):
+      <input type="text" name="notes" maxlength="1000" placeholder="e.g. confirmed C2 beacon">
+    </label>
+    <button type="submit" class="btn btn-danger">Approve &amp; queue kill</button>
+  </form>
+
+  <form method="post"
+        action="{{ url_for('reject', case_id=case_id) }}"
+        onsubmit="return confirm('Mark this case as a false positive?')">
+    <input type="hidden" name="_csrf" value="{{ csrf_token }}">
+    <label>Your name:
+      <input type="text" name="analyst" required maxlength="64" autocomplete="name">
+    </label>
+    <label>Reason (optional):
+      <input type="text" name="notes" placeholder="e.g. legitimate extension flagged in error">
+    </label>
+    <button type="submit" class="btn btn-secondary">Reject (false positive)</button>
+  </form>
+</section>
+{% endblock %}

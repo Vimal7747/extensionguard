@@ -1,20 +1,26 @@
-# tests/test_osv_lookup.py - OSV / CVE hash-lookup tests (HTTP mocked)
+# tests/test_osv_lookup.py - Stage 1d tests (HTTP mocked with REAL recorded replies)
 
 import hashlib
 import io
 import json
 import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from osv_lookup import (
-    SUSPICIOUS_CDN_PATTERNS,
-    _query_osv_hash,
+from extguard import crx_parser, osv_lookup
+from extguard.osv_lookup import (
+    _npm_deps_from,
     _query_osv_packages_batch,
     _scan_zip_contents,
     run_osv_checks,
 )
+
+RECORDED = Path(__file__).parent / "fixtures" / "recorded"
+
+PACKAGES = [
+    {"name": "lodash", "version": "4.17.20", "ecosystem": "npm"},
+    {"name": "is-number", "version": "7.0.0", "ecosystem": "npm"},
+]
 
 
 def _make_zip(files: dict) -> bytes:
@@ -26,43 +32,32 @@ def _make_zip(files: dict) -> bytes:
     return buf.getvalue()
 
 
+def _json_response(body, status: int = 200) -> MagicMock:
+    resp = MagicMock()
+    resp.status_code = status
+    resp.json.return_value = body
+    return resp
+
+
+def _recorded_batch() -> dict:
+    return json.loads((RECORDED / "osv_querybatch_lodash_isnumber.json").read_text())
+
+
 # ---------------------------------------------------------------------------
-# OSV hash query
+# The OSV hash query is gone - documented by a real recorded rejection
 # ---------------------------------------------------------------------------
 
 
-class TestOsvHashQuery:
-    def test_no_match_returns_empty_list(self):
-        """An OSV response with empty vulns array should return []."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"vulns": []}
-        with patch("osv_lookup.requests.post", return_value=mock_response):
-            result = _query_osv_hash("a" * 64)
-            assert result == []
+class TestNoHashLookup:
+    def test_osv_really_rejects_hash_queries(self):
+        """Recorded 2026-09-29: OSV answers a {"hash": ...} query with HTTP 400.
+        This is why the module no longer sends one."""
+        recorded = json.loads((RECORDED / "osv_hash_query_rejected.json").read_text())
+        assert recorded["status_code"] == 400
+        assert recorded["body"]["message"] == "invalid query"
 
-    def test_match_returns_vulns(self):
-        """An OSV response with vulnerabilities should return them."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "vulns": [{"id": "MAL-2026-001", "summary": "Compromised extension"}]
-        }
-        with patch("osv_lookup.requests.post", return_value=mock_response):
-            result = _query_osv_hash("a" * 64)
-            assert len(result) == 1
-            assert result[0]["id"] == "MAL-2026-001"
-
-    def test_network_error_returns_empty(self):
-        """Network errors must not crash - return []."""
-        with patch("osv_lookup.requests.post", side_effect=Exception("network")):
-            assert _query_osv_hash("a" * 64) == []
-
-    def test_500_returns_empty(self):
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        with patch("osv_lookup.requests.post", return_value=mock_response):
-            assert _query_osv_hash("a" * 64) == []
+    def test_module_no_longer_has_hash_query(self):
+        assert not hasattr(osv_lookup, "_query_osv_hash")
 
 
 # ---------------------------------------------------------------------------
@@ -72,28 +67,66 @@ class TestOsvHashQuery:
 
 class TestNpmBatchQuery:
     def test_empty_package_list_returns_empty(self):
-        assert _query_osv_packages_batch([]) == []
+        assert _query_osv_packages_batch([]) == ([], None)
 
-    def test_batch_response_parsed(self):
-        """OSV batch query result format: {results: [{vulns: [...]}, ...]}"""
-        packages = [
-            {"name": "left-pad", "version": "1.0.0", "ecosystem": "npm"},
-            {"name": "is-promise", "version": "2.0.0", "ecosystem": "npm"},
-        ]
+    def test_recorded_batch_reply_is_parsed(self):
+        with patch(
+            "extguard.osv_lookup.requests.post", return_value=_json_response(_recorded_batch())
+        ):
+            hits, error = _query_osv_packages_batch(PACKAGES)
+        assert error is None
+        assert hits  # lodash 4.17.20 has known advisories
+        assert all(h["_package"] == "lodash@4.17.20" for h in hits)
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {
-            "results": [
-                {"vulns": [{"id": "CVE-2024-1234"}]},  # left-pad has 1 CVE
-                {"vulns": []},  # is-promise is clean
-            ]
+    def test_http_error_is_reported(self):
+        with patch("extguard.osv_lookup.requests.post", return_value=_json_response({}, 503)):
+            assert _query_osv_packages_batch(PACKAGES) == ([], "HTTP 503")
+
+    def test_network_error_is_reported(self):
+        with patch("extguard.osv_lookup.requests.post", side_effect=OSError("down")):
+            hits, error = _query_osv_packages_batch(PACKAGES)
+        assert hits == []
+        assert error.startswith("network error")
+
+
+# ---------------------------------------------------------------------------
+# npm dependency extraction
+# ---------------------------------------------------------------------------
+
+
+class TestNpmDeps:
+    def test_package_json_exact_versions_only(self):
+        pkg = {
+            "dependencies": {"lodash": "^4.17.21", "axios": "~1.0.0", "x": "latest"},
+            "devDependencies": {"jest": "29.0.0", "y": "git+https://github.com/a/b"},
         }
-        with patch("osv_lookup.requests.post", return_value=mock_response):
-            result = _query_osv_packages_batch(packages)
-            assert len(result) == 1
-            assert result[0]["id"] == "CVE-2024-1234"
-            assert result[0]["_package"] == "left-pad"  # Annotated with pkg name
+        deps = dict(_npm_deps_from(pkg, "package.json"))
+        assert deps == {"lodash": "4.17.21", "axios": "1.0.0", "jest": "29.0.0"}
+
+    def test_lockfile_v1_does_not_crash(self):
+        """Regression: v1 lockfiles map name -> {version: ...}; the old code
+        called .split() on that dict and crashed the whole scan."""
+        lock = {"lockfileVersion": 1, "dependencies": {"lodash": {"version": "4.17.20"}}}
+        assert _npm_deps_from(lock, "package-lock.json") == [("lodash", "4.17.20")]
+
+    def test_lockfile_v3_packages(self):
+        lock = {
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"name": "root-project"},
+                "node_modules/lodash": {"version": "4.17.20"},
+                "node_modules/@scope/pkg": {"version": "1.0.0"},
+            },
+        }
+        assert set(_npm_deps_from(lock, "package-lock.json")) == {
+            ("lodash", "4.17.20"),
+            ("@scope/pkg", "1.0.0"),
+        }
+
+    def test_wrong_shapes_are_ignored(self):
+        assert _npm_deps_from(["not", "a", "dict"], "package.json") == []
+        assert _npm_deps_from({"dependencies": ["a"]}, "package.json") == []
+        assert _npm_deps_from({"dependencies": {"a": 1}}, "package.json") == []
 
 
 # ---------------------------------------------------------------------------
@@ -103,28 +136,21 @@ class TestNpmBatchQuery:
 
 class TestZipScanning:
     def test_finds_npm_dependencies(self):
-        """package.json deps should be extracted with cleaned version strings."""
         zip_bytes = _make_zip(
             {
                 "package.json": json.dumps(
                     {
-                        "name": "ext",
                         "dependencies": {"lodash": "^4.17.21", "axios": "~1.0.0"},
                         "devDependencies": {"jest": "29.0.0"},
                     }
                 ),
             }
         )
-        npm_packages, _ = _scan_zip_contents(zip_bytes)
-        names = [p["name"] for p in npm_packages]
-        assert set(names) == {"lodash", "axios", "jest"}
-
-        # Version strings should be cleaned (no ^ ~)
-        for pkg in npm_packages:
-            assert pkg["version"][0].isdigit()
+        npm_packages, _, errors = _scan_zip_contents(zip_bytes)
+        assert {p["name"] for p in npm_packages} == {"lodash", "axios", "jest"}
+        assert errors == []
 
     def test_finds_cdn_references_in_js(self):
-        """JS files loading from cdn.jsdelivr.net etc. should be flagged."""
         zip_bytes = _make_zip(
             {
                 "background.js": (
@@ -133,27 +159,33 @@ class TestZipScanning:
                 ),
             }
         )
-        _, cdn_refs = _scan_zip_contents(zip_bytes)
+        _, cdn_refs, _ = _scan_zip_contents(zip_bytes)
         assert any("jsdelivr" in r for r in cdn_refs)
         assert any("unpkg.com" in r for r in cdn_refs)
 
     def test_clean_zip_no_findings(self):
-        """A ZIP with just an innocent manifest should produce no findings."""
         zip_bytes = _make_zip(
             {
                 "manifest.json": '{"name": "test"}',
                 "background.js": 'console.log("hello world");\n',
             }
         )
-        npm_packages, cdn_refs = _scan_zip_contents(zip_bytes)
-        assert npm_packages == []
-        assert cdn_refs == []
+        assert _scan_zip_contents(zip_bytes) == ([], [], [])
 
-    def test_handles_malformed_package_json(self):
-        """Broken package.json should not crash the scanner."""
-        zip_bytes = _make_zip({"package.json": "this is not valid JSON"})
-        npm_packages, _ = _scan_zip_contents(zip_bytes)
-        assert npm_packages == []  # Skipped silently
+    def test_malformed_package_json_is_reported_not_silent(self):
+        npm_packages, _, errors = _scan_zip_contents(_make_zip({"package.json": "not JSON"}))
+        assert npm_packages == []
+        assert any("not valid JSON" in e for e in errors)
+
+    def test_oversized_file_is_skipped_and_reported(self, monkeypatch):
+        monkeypatch.setattr(osv_lookup, "MAX_SCAN_FILE_BYTES", 10)
+        _, _, errors = _scan_zip_contents(_make_zip({"big.js": "x" * 100}))
+        assert any("over scan limit" in e for e in errors)
+
+    def test_zip_bomb_is_reported_not_raised(self, monkeypatch):
+        monkeypatch.setattr(crx_parser, "MAX_MEMBER_BYTES", 10)
+        _, _, errors = _scan_zip_contents(_make_zip({"a.js": "x" * 100}))
+        assert any("zip bomb" in e for e in errors)
 
 
 # ---------------------------------------------------------------------------
@@ -162,53 +194,78 @@ class TestZipScanning:
 
 
 class TestRunOsvChecks:
-    def test_no_zip_skips_hash_checks(self):
+    def test_no_zip_skips_checks(self):
         result = run_osv_checks(None, {})
-        assert result["zip_hash"] is None
+        assert result["file_sha256"] is None
         assert result["osv_score"] == 0
 
-    def test_hash_match_drives_score(self):
-        """A hash that matches an OSV record should heavily score the extension."""
+    def test_hashes_the_whole_file_not_the_zip(self):
+        """Regression: VirusTotal indexes the whole .crx, so that is what we hash."""
         zip_bytes = _make_zip({"manifest.json": "{}"})
+        crx_bytes = b"Cr24-header" + zip_bytes
+        result = run_osv_checks(zip_bytes, {}, file_bytes=crx_bytes)
+        assert result["file_sha256"] == hashlib.sha256(crx_bytes).hexdigest()
+        assert result["zip_hash"] == hashlib.sha256(zip_bytes).hexdigest()
 
-        with (
-            patch("osv_lookup._query_osv_hash") as mock_hash,
-            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
-        ):
-            mock_hash.return_value = [{"id": "MAL-2026-001"}]
-            result = run_osv_checks(zip_bytes, {})
-            assert result["osv_score"] >= 20  # Hash match contributes >= 20
-            assert "MAL-2026-001" in str(result["flags"])
+    def test_vt_is_queried_with_the_file_hash(self):
+        zip_bytes = _make_zip({"manifest.json": "{}"})
+        crx_bytes = b"Cr24-header" + zip_bytes
+        vt_reply = {"score": 0, "flags": [], "found": False, "ok": True}
+        with patch("extguard.virustotal_lookup.lookup_hash", return_value=vt_reply) as mock_vt:
+            run_osv_checks(zip_bytes, {}, vt_cfg={"enabled": True}, file_bytes=crx_bytes)
+        assert mock_vt.call_args[0][0] == hashlib.sha256(crx_bytes).hexdigest()
 
-    def test_cdn_reference_adds_score(self):
-        """JS loading from unpkg should add risk points."""
+    def test_offline_scans_locally_but_makes_no_requests(self):
         zip_bytes = _make_zip(
             {
-                "background.js": 'fetch("https://unpkg.com/evil-pkg@1.0.0");',
+                "package.json": json.dumps({"dependencies": {"a": "1.0.0"}}),
+                "bg.js": 'fetch("https://unpkg.com/x");',
             }
         )
         with (
-            patch("osv_lookup._query_osv_hash", return_value=[]),
-            patch("osv_lookup._query_osv_packages_batch", return_value=[]),
+            patch("extguard.osv_lookup.requests.post") as mock_post,
+            patch("extguard.virustotal_lookup.lookup_hash") as mock_vt,
         ):
+            result = run_osv_checks(zip_bytes, {}, vt_cfg={"enabled": True}, network=False)
+        mock_post.assert_not_called()
+        mock_vt.assert_not_called()
+        assert result["osv_pkg_status"] == "skipped (offline)"
+        assert result["cdn_refs"]  # the local scan still ran
+        assert result["file_sha256"]
+
+    def test_package_lookup_failure_is_unknown_not_clean(self):
+        zip_bytes = _make_zip({"package.json": json.dumps({"dependencies": {"a": "1.0.0"}})})
+        with patch("extguard.osv_lookup._query_osv_packages_batch", return_value=([], "HTTP 503")):
             result = run_osv_checks(zip_bytes, {})
-            assert result["osv_score"] > 0
-            assert any("unpkg.com" in flag for flag in result["flags"])
+        assert result["osv_pkg_status"] == "error: HTTP 503"
+        assert any("status unknown" in f for f in result["flags"])
+
+    def test_vulnerable_package_adds_score(self):
+        zip_bytes = _make_zip({"package.json": json.dumps({"dependencies": {"a": "1.0.0"}})})
+        hits = [{"id": "GHSA-x", "_package": "a@1.0.0"}]
+        with patch("extguard.osv_lookup._query_osv_packages_batch", return_value=(hits, None)):
+            result = run_osv_checks(zip_bytes, {})
+        assert result["osv_pkg_status"] == "ok"
+        assert result["osv_score"] == 10
+
+    def test_cdn_reference_adds_score(self):
+        zip_bytes = _make_zip({"background.js": 'fetch("https://unpkg.com/evil-pkg@1.0.0");'})
+        result = run_osv_checks(zip_bytes, {})
+        assert result["osv_score"] > 0
+        assert any("unpkg.com" in flag for flag in result["flags"])
 
     def test_score_clamped_at_30(self):
-        """The osv_score contribution must be capped at 30 (was 20 before VT)."""
         zip_bytes = _make_zip(
             {
-                "manifest.json": "{}",
+                "package.json": json.dumps({"dependencies": {"a": "1.0.0"}}),
                 "background.js": "\n".join(f'fetch("https://unpkg.com/p{i}");' for i in range(20)),
             }
         )
+        vt_reply = {"score": 30, "flags": [], "found": True, "ok": True}
+        hits = [{"id": "Y", "_package": "p"}] * 5
         with (
-            patch("osv_lookup._query_osv_hash", return_value=[{"id": "X"}] * 5),
-            patch(
-                "osv_lookup._query_osv_packages_batch",
-                return_value=[{"id": "Y", "_package": "p"}] * 5,
-            ),
+            patch("extguard.virustotal_lookup.lookup_hash", return_value=vt_reply),
+            patch("extguard.osv_lookup._query_osv_packages_batch", return_value=(hits, None)),
         ):
-            result = run_osv_checks(zip_bytes, {})
-            assert result["osv_score"] <= 30
+            result = run_osv_checks(zip_bytes, {}, vt_cfg={"enabled": True})
+        assert result["osv_score"] == 30

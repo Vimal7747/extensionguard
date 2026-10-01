@@ -145,6 +145,34 @@ def crx2_bytes(benign_zip_bytes) -> bytes:
 
 
 # ---------------------------------------------------------------------------
+# Keep every test away from the developer's real ~/.extguard
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolated_extguard_home(tmp_path, monkeypatch):
+    """
+    Point every per-user location at a temp dir so no test ever reads or
+    writes the developer's real ~/.extguard (config, quarantine, history,
+    synced TTP intel, chain-of-custody key).
+    Module-level constants were computed at import time, so patch those too.
+    """
+    from extguard import update_velocity
+    from extguard.remediators import forensics
+
+    home = tmp_path / "extguard_home"
+    monkeypatch.setenv("EXTGUARD_HOME", str(home))
+    for var in ("EXTGUARD_CONFIG", "EXTGUARD_QUARANTINE", "EXTGUARD_TTP_DIR"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("EXTGUARD_COC_KEY", "test-only-coc-key")
+    monkeypatch.setattr(forensics, "COC_KEY_FILE", home / "coc_hmac.key")
+    monkeypatch.setattr(forensics, "DEFAULT_QUARANTINE_ROOT", home / "quarantine")
+    monkeypatch.setattr(update_velocity, "HISTORY_FILE", home / "version_history.json")
+    # A config file in the directory pytest runs from must not leak into tests
+    monkeypatch.chdir(tmp_path)
+
+
+# ---------------------------------------------------------------------------
 # Temp directories for stateful tests
 # ---------------------------------------------------------------------------
 
@@ -164,7 +192,7 @@ def temp_history_file(tmp_path, monkeypatch):
     pollute the developer's real history store. Uses monkeypatch so the
     override is reverted after the test.
     """
-    import update_velocity
+    from extguard import update_velocity
 
     history_path = tmp_path / "version_history.json"
     monkeypatch.setattr(update_velocity, "HISTORY_FILE", history_path)

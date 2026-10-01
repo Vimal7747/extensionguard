@@ -4,12 +4,14 @@
 
 def test_imports_work():
     """All public modules must import cleanly with no missing deps."""
-    import crx_parser  # noqa: F401
-    import models  # noqa: F401
-    import osv_lookup  # noqa: F401
-    import permission_scorer  # noqa: F401
-    import publisher_checker  # noqa: F401
-    import update_velocity  # noqa: F401
+    from extguard import (
+        crx_parser,  # noqa: F401
+        models,  # noqa: F401
+        osv_lookup,  # noqa: F401
+        permission_scorer,  # noqa: F401
+        publisher_checker,  # noqa: F401
+        update_velocity,  # noqa: F401
+    )
 
 
 def test_benign_fixture_shape(benign_manifest_raw):

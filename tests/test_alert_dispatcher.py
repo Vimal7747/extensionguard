@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from alert_dispatcher import (
+from extguard.alert_dispatcher import (
     SAMPLE_ALERT,
     AlertState,
     _fingerprint,
@@ -22,6 +22,26 @@ from alert_dispatcher import (
 # ---------------------------------------------------------------------------
 # Fingerprinting - the deduplication key
 # ---------------------------------------------------------------------------
+
+
+class TestDispatchRedaction:
+    def test_secrets_in_adapter_errors_are_scrubbed(self, sample_alert, monkeypatch):
+        """Adapter errors are PRINTED (bypassing the log filter) - they used to
+        be able to echo a Slack webhook URL or an API key verbatim."""
+        from extguard import alert_dispatcher
+
+        def leaky(alert, cfg):
+            return {
+                "ok": False,
+                "error": "POST https://hooks.slack.com/services/T0/B0/SECRETSECRET failed; "
+                "x-apikey: " + "f" * 64,
+            }
+
+        monkeypatch.setitem(alert_dispatcher.ADAPTERS, "slack", leaky)
+        results = alert_dispatcher.dispatch(sample_alert, {"slack": {"enabled": True}})
+        error = results["slack"]["error"]
+        assert "SECRETSECRET" not in error
+        assert "f" * 64 not in error
 
 
 class TestFingerprint:
@@ -100,15 +120,49 @@ class TestAlertState:
         _, escalated, _ = state.should_send(sample_alert)
         assert escalated is True
 
-    def test_escalation_only_fires_once(self, sample_alert):
-        """The 4th, 5th, ... sends should not re-fire escalation."""
+    def test_escalated_severity_does_not_drop_back(self, sample_alert):
+        """Regression (review harness #9): after escalating on the 3rd alert,
+        the 4th and 5th went back to the original severity. They must stay
+        escalated - but only the first one is announced as ESCALATED."""
         state = AlertState(dedup_ttl=0, escalation_threshold=3)
         for _ in range(3):
             state.should_send(sample_alert)
-        # 4th and 5th: still sends, but no new escalation
         for _ in range(2):
-            _, escalated, _ = state.should_send(sample_alert)
-            assert escalated is False
+            _, escalated, reason = state.should_send(sample_alert)
+            assert escalated is True
+            assert not reason.startswith("ESCALATED")
+
+    def test_more_severe_alert_bypasses_dedup(self, sample_alert):
+        """Regression (review harness #8): a CRITICAL right after a HIGH of the
+        same rule was suppressed as a 'duplicate' for five minutes."""
+        state = AlertState(dedup_ttl=300, escalation_threshold=10)
+        high = copy.deepcopy(sample_alert)
+        high["severity"] = "high"
+        assert state.should_send(high)[0] is True
+        assert state.should_send(sample_alert)[0] is True  # critical gets through
+        assert state.should_send(sample_alert)[0] is False  # a 2nd critical is a dup
+
+    def test_suppressed_duplicates_count_toward_escalation(self, sample_alert):
+        """A burst inside the dedup window must still escalate."""
+        medium = copy.deepcopy(sample_alert)
+        medium["severity"] = "medium"
+        state = AlertState(dedup_ttl=300, escalation_threshold=3)
+        assert state.should_send(medium)[0] is True
+        assert state.should_send(medium)[0] is False  # dup, but counted
+        send, escalated, reason = state.should_send(medium)
+        assert send is True and escalated is True
+        assert reason.startswith("ESCALATED")
+
+    def test_escalation_window_expires(self, sample_alert, monkeypatch):
+        from extguard import alert_dispatcher
+
+        clock = iter([0.0, 10.0, 5000.0])
+        monkeypatch.setattr(alert_dispatcher.time, "time", lambda: next(clock))
+        state = AlertState(dedup_ttl=0, escalation_threshold=3, escalation_window=3600)
+        state.should_send(sample_alert)
+        state.should_send(sample_alert)
+        _, escalated, _ = state.should_send(sample_alert)  # 5000 s later: old sightings expired
+        assert escalated is False
 
     def test_different_extensions_dont_collide(self, sample_alert):
         """Two different extensions hitting the same rule shouldn't dedup-collide."""
@@ -144,6 +198,28 @@ class TestNormalisation:
             "ai_triage": None,
         }
         assert normalise_alert(low_triage, "triage") is None
+
+    def test_also_dispatch_triage_false_disables_triage(self, sample_triage_result):
+        """Config key that used to be documented but never read."""
+        cfg = {"also_dispatch_triage": False}
+        assert normalise_alert(sample_triage_result, "triage", cfg) is None
+
+    def test_triage_min_score_is_honoured(self, sample_triage_result):
+        triage = dict(sample_triage_result, final_score=50, risk_level="high")
+        assert normalise_alert(triage, "triage", {"triage_min_score": 60}) is None
+        assert normalise_alert(triage, "triage", {"triage_min_score": 45}) is not None
+
+    def test_failed_scan_is_dispatched_not_dropped(self):
+        alert = normalise_alert({"error": "zip bomb", "stage": "1a"}, "triage", {})
+        assert alert["rule"] == "STAGE1-SCAN-FAILED"
+
+    def test_non_dict_input_is_skipped(self):
+        assert normalise_alert(["not", "a", "dict"], "monitor") is None
+
+    def test_triage_uses_final_score(self, sample_triage_result):
+        """final_score (max of Stage 1 and AI) beats the AI-only score."""
+        triage = dict(sample_triage_result, final_score=100, ai_risk_score=3)
+        assert normalise_alert(triage, "triage")["detail"]["score"] == 100
 
     def test_triage_critical_converted_to_alert(self, sample_triage_result):
         """A critical triage should become a STAGE2-TRIAGE alert."""
@@ -202,7 +278,7 @@ class TestStdinAutoDetect:
         import io
         import json as _json
 
-        from alert_dispatcher import _read_triage_stdin
+        from extguard.alert_dispatcher import _read_triage_stdin
 
         pretty = _json.dumps(sample_triage_result, indent=2)
         monkeypatch.setattr("sys.stdin", io.StringIO(pretty))
@@ -216,7 +292,7 @@ class TestStdinAutoDetect:
         still get every alert parsed correctly (one per line)."""
         import io
 
-        from alert_dispatcher import _read_triage_stdin
+        from extguard.alert_dispatcher import _read_triage_stdin
 
         lines = (
             '{"rule": "RULE-01", "severity": "high"}\n{"rule": "RULE-02", "severity": "medium"}\n'
@@ -231,7 +307,7 @@ class TestStdinAutoDetect:
     def test_empty_stdin_returns_nothing(self, monkeypatch):
         import io
 
-        from alert_dispatcher import _read_triage_stdin
+        from extguard.alert_dispatcher import _read_triage_stdin
 
         monkeypatch.setattr("sys.stdin", io.StringIO(""))
         assert list(_read_triage_stdin(verbose=False)) == []

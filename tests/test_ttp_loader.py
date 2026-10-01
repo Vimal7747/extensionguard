@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from ttp_loader import (
+from extguard.ttp_loader import (
     _FALLBACK_LIBRARY,
     clear_cache,
     library_stats,

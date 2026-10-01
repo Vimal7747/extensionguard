@@ -1,19 +1,56 @@
 # tests/test_sigma_generator.py - Sigma rule generator tests
 
+import inspect
 import re
 import uuid
 
 import pytest
 
-from sigma_generator import (
+from extguard.sigma_generator import (
+    AUTHOR,
+    C2_HOST_SUFFIXES,
+    PROXY_RULES,
     RULES,
-    SIGMA_NAMESPACE,
+    RULES_CREATED,
+    RULES_MODIFIED,
+    SENSOR_RULES,
     _emit_yaml,
     _rule_uuid,
     _yaml_value,
     generate_all_rules,
+    main,
     write_rules_to,
 )
+
+RULE_IDS = [r["rule_key"] for r in RULES]
+
+# Field names of the Sigma `proxy` log source taxonomy
+SIGMA_PROXY_FIELDS = {
+    "c-uri",
+    "c-uri-extension",
+    "c-uri-query",
+    "c-uri-stem",
+    "c-useragent",
+    "cs-bytes",
+    "cs-cookie",
+    "cs-host",
+    "cs-method",
+    "cs-referrer",
+    "cs-version",
+    "r-dns",
+    "sc-bytes",
+    "sc-status",
+    "src_ip",
+    "dst_ip",
+}
+
+
+def _monitor_rule_keys() -> set:
+    """Every RULE-NN the behavioral monitor can emit, read from its source."""
+    from extguard import behavioral_monitor as bm
+
+    return set(re.findall(r'"(RULE-\d\d)"', inspect.getsource(bm)))
+
 
 # ---------------------------------------------------------------------------
 # Rule catalog integrity
@@ -21,15 +58,14 @@ from sigma_generator import (
 
 
 class TestRuleCatalog:
-    def test_six_rules_emitted(self):
-        """Should be one Sigma rule per behavioral_monitor rule (6)."""
-        assert len(RULES) == 6
-        keys = {r["rule_key"] for r in RULES}
-        assert keys == {f"RULE-0{i}" for i in range(1, 7)}
+    def test_one_sensor_rule_per_monitor_rule(self):
+        """Adding a RULE to behavioral_monitor.py must add a Sigma rule too."""
+        monitor_rules = _monitor_rule_keys()
+        assert monitor_rules == {f"RULE-0{i}" for i in range(1, 8)}
+        assert {r["rule_key"] for r in SENSOR_RULES} == monitor_rules
 
-    @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
+    @pytest.mark.parametrize("rule", RULES, ids=RULE_IDS)
     def test_every_rule_has_required_fields(self, rule):
-        """Every rule must include the mandatory Sigma fields."""
         for field in (
             "title",
             "description",
@@ -42,20 +78,60 @@ class TestRuleCatalog:
         ):
             assert field in rule, f"{rule['rule_key']} missing {field!r}"
 
-    @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
+    @pytest.mark.parametrize("rule", RULES, ids=RULE_IDS)
     def test_level_is_valid_sigma_severity(self, rule):
         assert rule["level"] in ("informational", "low", "medium", "high", "critical")
 
-    @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
-    def test_detection_has_condition(self, rule):
-        """Every Sigma rule needs a `condition` key in detection."""
-        assert "condition" in rule["detection"]
+    @pytest.mark.parametrize("rule", RULES, ids=RULE_IDS)
+    def test_condition_only_names_defined_selections(self, rule):
+        detection = rule["detection"]
+        names = set(re.findall(r"[A-Za-z_]+", detection["condition"])) - {"and", "or", "not"}
+        assert names, "empty condition"
+        assert names <= set(detection) - {"condition"}
 
-    @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
+    @pytest.mark.parametrize("rule", RULES, ids=RULE_IDS)
     def test_tags_include_attack_id(self, rule):
-        """Every rule cites at least one attack.t#### MITRE technique tag."""
-        attack_tags = [t for t in rule["tags"] if t.startswith("attack.t")]
+        attack_tags = [t for t in rule["tags"] if re.fullmatch(r"attack\.t\d{4}(\.\d{3})?", t)]
         assert attack_tags, f"{rule['rule_key']} has no attack.t#### tag"
+
+    @pytest.mark.parametrize("rule", RULES, ids=RULE_IDS)
+    def test_no_rule_targets_a_log_source_siems_do_not_have(self, rule):
+        """The old RULE-04/05/06 pointed at `product: browser` sources nobody collects."""
+        assert rule["logsource"].get("product") != "browser"
+
+    @pytest.mark.parametrize("rule", PROXY_RULES, ids=[r["rule_key"] for r in PROXY_RULES])
+    def test_proxy_rules_use_standard_proxy_fields(self, rule):
+        for name, selection in rule["detection"].items():
+            if name == "condition":
+                continue
+            for field, value in selection.items():
+                assert field.split("|")[0] in SIGMA_PROXY_FIELDS, field
+                # The old RULE-01 had `c-uri-extension: ""`, which never matches
+                assert value not in ("", []), f"{field} has an empty value"
+
+    def test_no_proxy_firehose_rules(self):
+        """POST-with-cookie / JSON-API-call to github.com matches every logged-in user."""
+        for rule in PROXY_RULES:
+            detection = repr(rule["detection"]).lower()
+            assert "github.com" not in detection
+            assert "cookie" not in detection
+
+    def test_proxy_hosts_match_the_monitor(self):
+        from extguard.behavioral_monitor import C2_HOST_PATTERNS
+
+        for suffix in C2_HOST_SUFFIXES:
+            assert C2_HOST_PATTERNS.search("evil" + suffix), suffix
+        # ...and every host the monitor knows is in the Sigma list
+        monitor_hosts = re.findall(r"[a-z-]+\\\.[a-z]+", C2_HOST_PATTERNS.pattern)
+        for host in monitor_hosts:
+            assert "." + host.replace("\\.", ".") in C2_HOST_SUFFIXES
+
+    def test_sensor_rules_match_on_the_alert_rule_field(self):
+        for rule in RULES:
+            if rule in PROXY_RULES:
+                continue
+            assert rule["logsource"]["product"] == "extensionguard"
+            assert rule["detection"]["selection"] == {"rule": rule["rule_key"]}
 
 
 # ---------------------------------------------------------------------------
@@ -65,20 +141,14 @@ class TestRuleCatalog:
 
 class TestUuid:
     def test_uuid_is_valid_uuidv5(self):
-        result = _rule_uuid("RULE-01")
-        parsed = uuid.UUID(result)
-        # UUIDv5 has version=5 in its representation
-        assert parsed.version == 5
+        assert uuid.UUID(_rule_uuid("RULE-01")).version == 5
 
     def test_uuid_is_stable(self):
         """Same rule_key must always produce the same UUID - SIEM-side tracking depends on this."""
         assert _rule_uuid("RULE-01") == _rule_uuid("RULE-01")
-        assert _rule_uuid("RULE-02") == _rule_uuid("RULE-02")
 
     def test_uuid_differs_per_rule(self):
-        """Each rule_key must produce a different UUID."""
-        uuids = {_rule_uuid(r["rule_key"]) for r in RULES}
-        assert len(uuids) == len(RULES)
+        assert len({_rule_uuid(k) for k in RULE_IDS}) == len(RULES)
 
 
 # ---------------------------------------------------------------------------
@@ -105,106 +175,70 @@ class TestYamlValue:
 
 
 # ---------------------------------------------------------------------------
-# YAML emission - parses cleanly as PyYAML if installed (sanity check)
+# YAML emission
 # ---------------------------------------------------------------------------
 
 
 class TestEmitYaml:
-    @pytest.mark.parametrize("rule", RULES, ids=[r["rule_key"] for r in RULES])
+    @pytest.mark.parametrize("rule", RULES, ids=RULE_IDS)
     def test_emitted_yaml_is_parseable(self, rule):
-        """The output should round-trip through a YAML parser (if available)."""
-        text = _emit_yaml(rule)
-        try:
-            import yaml
-        except ImportError:
-            pytest.skip("PyYAML not installed - sanity-checking string structure only")
-            return
-        parsed = yaml.safe_load(text)
+        yaml = pytest.importorskip("yaml")
+        parsed = yaml.safe_load(_emit_yaml(rule))
         assert parsed["title"] == rule["title"]
         assert parsed["level"] == rule["level"]
-        # The id field should be a valid UUID string
+        assert parsed["logsource"] == rule["logsource"]
         uuid.UUID(parsed["id"])
 
-    def test_yaml_contains_signature_fields(self):
-        """Every Sigma rule should contain title:, id:, status:, level: lines."""
+    def test_author_and_dates_are_fixed(self):
         text = _emit_yaml(RULES[0])
-        for header in (
-            "title:",
-            "id:",
-            "status:",
-            "level:",
-            "logsource:",
-            "detection:",
-            "condition:",
-        ):
-            assert header in text
+        assert f'author: "{AUTHOR}"' in text
+        assert "Vimal7747" in AUTHOR
+        assert "example" not in AUTHOR
+        assert f"date: {RULES_CREATED}" in text
+        assert f"modified: {RULES_MODIFIED}" in text
 
     def test_yaml_contains_source_comment(self):
-        """The emitter adds a comment linking back to behavioral_monitor.py."""
         text = _emit_yaml(RULES[0])
-        assert "behavioral_monitor.py" in text
-        assert "RULE-01" in text
+        assert "# Source: ExtensionGuard behavioral_monitor.py RULE-01" in text
 
 
 # ---------------------------------------------------------------------------
-# generate_all_rules and write_rules_to
+# generate_all_rules, write_rules_to and the CLI
 # ---------------------------------------------------------------------------
 
 
 class TestGenerate:
-    def test_all_rules_returns_six(self):
-        result = generate_all_rules()
-        assert len(result) == 6
-        assert set(result.keys()) == {f"RULE-0{i}" for i in range(1, 7)}
+    def test_all_rules_keyed_by_rule_key(self):
+        assert set(generate_all_rules()) == set(RULE_IDS)
 
     def test_write_creates_one_yml_per_rule_plus_readme(self, tmp_path):
         written = write_rules_to(tmp_path / "sigma")
-        # 6 rules + README
-        assert len(written) == 7
-        yml_files = list((tmp_path / "sigma").glob("*.yml"))
-        assert len(yml_files) == 6
+        assert len(written) == len(RULES) + 1
+        assert len(list((tmp_path / "sigma").glob("*.yml"))) == len(RULES)
         assert (tmp_path / "sigma" / "README.md").exists()
 
     def test_written_yml_filenames_are_lowercase(self, tmp_path):
         write_rules_to(tmp_path / "sigma")
-        files = sorted((tmp_path / "sigma").glob("*.yml"))
-        for f in files:
+        for f in (tmp_path / "sigma").glob("*.yml"):
             assert f.name == f.name.lower()
-            assert f.name.startswith("rule-")
 
-    def test_idempotent_regeneration_produces_identical_output(self, tmp_path):
-        """Critical: running the generator twice must produce the same output
-        so SIEM-side rule tracking (by UUID + content hash) is stable."""
-        out1 = tmp_path / "sigma1"
-        out2 = tmp_path / "sigma2"
-        write_rules_to(out1)
-        write_rules_to(out2)
-        for rule in RULES:
-            key = rule["rule_key"].lower()
-            assert (out1 / f"{key}.yml").read_text() == (out2 / f"{key}.yml").read_text()
+    def test_regeneration_is_byte_identical(self, tmp_path):
+        """Fixed dates + UUIDv5: running twice (even on another day) changes nothing."""
+        write_rules_to(tmp_path / "a")
+        write_rules_to(tmp_path / "b")
+        for f in (tmp_path / "a").iterdir():
+            assert f.read_bytes() == (tmp_path / "b" / f.name).read_bytes()
 
-    def test_readme_mentions_target_siem_backends(self, tmp_path):
+    def test_readme_documents_log_sources(self, tmp_path):
         write_rules_to(tmp_path / "sigma")
         readme = (tmp_path / "sigma" / "README.md").read_text()
-        for siem in ("Splunk", "Sentinel", "Elastic", "Chronicle"):
-            assert siem in readme
+        for text in ("Splunk", "Sentinel", "Elastic", "extguard:alert", "ExtensionGuard_CL"):
+            assert text in readme
 
+    def test_cli_prints_one_rule(self, capsys):
+        assert main(["--output", "-", "--rule", "rule-05"]) == 0
+        out = capsys.readouterr().out
+        assert "Disabled or Uninstalled Another Extension" in out
 
-# ---------------------------------------------------------------------------
-# Cross-check: every behavioral_monitor RULE-NN is covered
-# ---------------------------------------------------------------------------
-
-
-class TestCoverageAgainstBehavioralMonitor:
-    """If a new RULE is added to behavioral_monitor.py, the Sigma generator
-    needs an update too. This test catches that drift early."""
-
-    def test_every_behavioral_rule_has_a_sigma_rule(self):
-        import behavioral_monitor as bm
-
-        # behavioral_monitor exposes RULE-XX via _rule_to_mitre's mapping.
-        # We can't directly enumerate them, but we can check the known set.
-        bm_rules = {f"RULE-0{i}" for i in range(1, 7)}
-        sigma_rules = {r["rule_key"] for r in RULES}
-        missing = bm_rules - sigma_rules
-        assert not missing, f"Sigma rules missing for: {missing}"
+    def test_cli_unknown_rule_exits_2(self, capsys):
+        assert main(["--output", "-", "--rule", "RULE-99"]) == 2

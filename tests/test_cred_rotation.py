@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from remediators import cred_rotation
-from remediators.cred_rotation import (
+from extguard.remediators import cred_rotation
+from extguard.remediators.cred_rotation import (
     CREDENTIAL_PLAYBOOKS,
     _detect_applicable_stores,
     _max_severity,

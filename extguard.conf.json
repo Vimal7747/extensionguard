@@ -43,17 +43,20 @@
     "enabled": false,
     "service_account_json": "/path/to/service-account.json",
     "customer_id": "YOUR-WORKSPACE-CUSTOMER-ID",
+    "admin_email": "admin@your-domain.example",
     "default_org_unit": "/"
   },
 
   "webhook": {
-    "_comment": "GitHub webhook ingestor for live TTP library updates. Set up a webhook in the GitHub TTP repo pointing at https://<your-dashboard>/webhook/github with content-type application/json and the shared secret below. Pushes to `branch` trigger an automatic sync into ttp_library/. The dashboard rejects requests without a valid X-Hub-Signature-256.",
+    "_comment": "TTP library updates from a GitHub repo. Run `extguard-webhook` (NOT the dashboard) behind HTTPS and point a GitHub push webhook at https://<host>/webhook/github with content-type application/json and the secret below. Each push STAGES the new library; review it and run `extguard-ttp-sync --activate` to make it live, unless auto_activate is true. require_verified_commit refuses unsigned head commits. The same section drives `extguard-ttp-sync`.",
     "owner":  "YOUR-GH-OWNER",
     "repo":   "YOUR-TTP-REPO",
     "branch": "main",
     "path":   "",
     "secret": "YOUR-WEBHOOK-SECRET-HERE",
-    "delete_orphans": false
+    "delete_orphans": false,
+    "auto_activate": false,
+    "require_verified_commit": false
   },
 
   "virustotal": {
