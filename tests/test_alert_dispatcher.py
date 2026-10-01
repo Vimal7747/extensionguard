@@ -164,6 +164,27 @@ class TestAlertState:
         _, escalated, _ = state.should_send(sample_alert)  # 5000 s later: old sightings expired
         assert escalated is False
 
+    def test_sightings_are_bounded(self, sample_alert, monkeypatch):
+        """An alert storm can't grow one fingerprint's history without limit."""
+        monkeypatch.setattr(AlertState, "MAX_SIGHTINGS", 50)
+        state = AlertState(dedup_ttl=0, escalation_threshold=3)
+        for _ in range(200):
+            _, escalated, reason = state.should_send(sample_alert)
+        assert escalated is True
+        assert len(next(iter(state._sightings.values()))) == 50
+        assert "50+x" in reason
+
+    def test_alert_storm_stays_fast(self, sample_alert):
+        """Regression: every call re-filtered the whole hour of sightings, so
+        20,000 alerts of one rule took well over 10 s (O(n^2)). Now O(1) each."""
+        import time as real_time
+
+        state = AlertState(dedup_ttl=300, escalation_threshold=3)
+        start = real_time.perf_counter()
+        for _ in range(20_000):
+            state.should_send(sample_alert)
+        assert real_time.perf_counter() - start < 2.0
+
     def test_different_extensions_dont_collide(self, sample_alert):
         """Two different extensions hitting the same rule shouldn't dedup-collide."""
         state = AlertState(dedup_ttl=300, escalation_threshold=3)

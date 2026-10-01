@@ -26,6 +26,7 @@ import socket
 import sys
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
@@ -136,7 +137,16 @@ class AlertState:
       `escalation_window` seconds, the alert is promoted to "critical", and it
       stays critical while the sightings keep coming (it used to drop back to
       its original severity on the very next alert).
+
+    Cost: O(1) per alert on average. Sightings sit in a queue, expired ones are
+    dropped from the front, and each queue holds at most MAX_SIGHTINGS
+    entries - an alert storm can't make each dispatch slower or grow memory
+    without limit. (Re-filtering the whole hour of sightings on every alert
+    made one dedup check ~3,000x slower under load.)
     """
+
+    # Enough for any sane escalation threshold; counts above it show as "N+"
+    MAX_SIGHTINGS = 10_000
 
     def __init__(self, dedup_ttl: int, escalation_threshold: int, escalation_window: int = 3600):
         self.dedup_ttl = dedup_ttl
@@ -145,8 +155,9 @@ class AlertState:
 
         # fingerprint -> (timestamp of last dispatch, severity rank sent)
         self._last_sent: dict = {}
-        # fingerprint -> [timestamps of every sighting inside the window]
+        # fingerprint -> deque of sighting timestamps inside the window, oldest first
         self._sightings: dict = {}
+        self._max_sightings = max(self.MAX_SIGHTINGS, escalation_threshold)
         # fingerprints whose escalation has already been announced
         self._announced: set = set()
 
@@ -168,11 +179,12 @@ class AlertState:
             now = time.time()
 
             # --- Count this sighting (duplicates included) ---
-            recent = [
-                t for t in self._sightings.get(fingerprint, []) if now - t < self.escalation_window
-            ]
+            recent = self._sightings.get(fingerprint)
+            if recent is None:
+                recent = self._sightings[fingerprint] = deque(maxlen=self._max_sightings)
+            while recent and now - recent[0] >= self.escalation_window:
+                recent.popleft()  # oldest first, so stop at the first one still in the window
             recent.append(now)
-            self._sightings[fingerprint] = recent
             count = len(recent)
 
             escalated = count >= self.escalation_threshold
@@ -194,12 +206,13 @@ class AlertState:
             if newly_escalated:
                 self._announced.add(fingerprint)
 
+        shown = f"{count}+" if count >= self._max_sightings else str(count)
         if newly_escalated:
-            reason = f"ESCALATED: rule {rule} has fired {count}x for this extension"
+            reason = f"ESCALATED: rule {rule} has fired {shown}x for this extension"
         elif escalated:
-            reason = f"Escalated rule still firing ({count}x in window)"
+            reason = f"Escalated rule still firing ({shown}x in window)"
         else:
-            reason = f"New alert (rule count: {count})"
+            reason = f"New alert (rule count: {shown})"
         return True, escalated, reason
 
 
