@@ -45,8 +45,8 @@ What's in the box:
 
 | Property | Value |
 | --- | --- |
-| Version | **0.2.0** |
-| Tests | **827 passing** (`pytest`) + 5 opt-in live tests (real APIs, headless Chrome) |
+| Version | **0.3.0** |
+| Tests | **829 passing** (`pytest`) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](PERFORMANCE.md)) |
 | Lint | **0 findings** (`ruff check`) |
 | Python | 3.10 – 3.13 |
@@ -84,7 +84,7 @@ pip install extensionguard
 ```powershell
 docker compose up -d                  # full SOC deployment
 # OR
-docker run -p 127.0.0.1:5000:5000 extensionguard:0.2.0   # dashboard, localhost only
+docker run -p 127.0.0.1:5000:5000 extensionguard:0.3.0   # dashboard, localhost only
 ```
 
 ### Run a scan
@@ -497,7 +497,7 @@ extguard/                         (repository root)
     dashboard_templates/          - Jinja2 templates for the Flask UI
     dashboard_static/             - CSS for the Flask UI
 
-  tests/                          - 827 pytest tests
+  tests/                          - 829 pytest tests
     benchmarks/                   - 13 pytest-benchmark performance baselines
     fixtures/recorded/            - Real API responses the tests replay
     test_live_apis.py             - Opt-in contract tests against real APIs

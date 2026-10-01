@@ -17,6 +17,11 @@ ExtensionGuard uses [SemVer](https://semver.org/):
 **Schema migrations** in `chain_of_custody.json` are always MAJOR — they
 break the integrity guarantee for existing case folders.
 
+**While the version is 0.x**, breaking changes bump MINOR instead
+(0.2.0 → 0.3.0), as SemVer allows for initial development. List them under
+a `### Breaking` heading in the CHANGELOG. 1.0.0 is a promise that the CLI,
+config and evidence formats are stable.
+
 ## 2. Bump the version
 
 ```powershell
@@ -65,6 +70,7 @@ extguard-dispatch --help
 extguard-remediate --help
 extguard-ttp-sync --help
 extguard-sigma --help
+extguard-webhook --help
 deactivate
 
 # Verify the Docker image builds
@@ -75,11 +81,29 @@ docker run --rm extensionguard:0.3.0 extguard --help
 ## 4. Commit + tag
 
 ```powershell
+`main` is protected by the "Protect main" ruleset (PR + green CI required), so
+the release commit goes through a pull request like any other change:
+
+```powershell
+git checkout -b release-0.3.0
 git add pyproject.toml CHANGELOG.md
 git commit -m "Release v0.3.0"
-git tag -a v0.3.0 -m "ExtensionGuard 0.3.0"
-git push origin main v0.3.0
+git push -u origin release-0.3.0
+# Open the PR, wait for CI, then "Rebase and merge" it on GitHub.
 ```
+
+Rebase-merging gives the commit a new ID, so tag the commit that landed on
+`main` - never the one on the release branch:
+
+```powershell
+git checkout main
+git pull --ff-only
+git tag -a v0.3.0 -m "ExtensionGuard 0.3.0"
+git push origin v0.3.0
+```
+
+Build the release artefacts (step 3's `python -m build`) from this tagged
+commit.
 
 ## 5. Publish to PyPI
 
@@ -112,10 +136,10 @@ trust PyPI can download directly.
 ## 7. Publish the Docker image (optional)
 
 ```powershell
-docker tag extensionguard:0.3.0 ghcr.io/example/extensionguard:0.3.0
-docker tag extensionguard:0.3.0 ghcr.io/example/extensionguard:latest
-docker push ghcr.io/example/extensionguard:0.3.0
-docker push ghcr.io/example/extensionguard:latest
+docker tag extensionguard:0.3.0 ghcr.io/vimal7747/extensionguard:0.3.0
+docker tag extensionguard:0.3.0 ghcr.io/vimal7747/extensionguard:latest
+docker push ghcr.io/vimal7747/extensionguard:0.3.0
+docker push ghcr.io/vimal7747/extensionguard:latest
 ```
 
 ## 8. Announce
