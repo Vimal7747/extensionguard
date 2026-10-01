@@ -26,25 +26,41 @@ or OS scheduling jitter — generally safe to ignore).
 
 ## Baseline (Python 3.13.6, Windows 11, single-core wall-clock)
 
-Measured 2026-05-23 on a developer laptop. Your numbers will vary
+Measured 2026-10-02 (v0.3.0) on a developer laptop. Your numbers will vary
 ±2–5× depending on CPU, disk speed, and Python build. **The relative
 ordering is what matters — that's stable across hardware.**
 
 | Hot path | Median latency | Throughput (ops/s) | What it represents |
 | --- | ---: | ---: | --- |
-| `AlertState.should_send` | 1.2 µs | 675,000 | Stage 4 dedup decision per alert |
-| `score_permissions` | 5.3 µs | 174,000 | Stage 1b TTP-calibrated scoring |
-| `check_publisher` (offline) | 6.6 µs | 147,000 | Stage 1c local validation |
-| `enrich` | 18 µs | 52,000 | Stage 4 enrichment per alert |
-| `cred_rotation.generate_playbook` (worst case) | 48 µs | 20,000 | Stage 5 playbook synthesis |
-| `sigma_generator.generate_all_rules` | 80 µs | 12,000 | SIEM export, all 6 rules |
-| `parse_crx` (50 KB CRX) | 213 µs | 4,160 | Stage 1a parsing |
-| `osv._scan_zip_contents` (50 KB ZIP) | 233 µs | 4,100 | Stage 1d local content scan |
-| `ttp_loader.load_ttp_library` (warm cache) | 382 µs | 2,440 | Stage 2 pre-API per-call cost |
-| `forensics.verify_case` | 391 µs | 2,315 | Re-hash every artifact in a case |
-| `ttp_loader.load_ttp_library` (cold) | 1.9 ms | 485 | First call after sync |
-| `analyse_version` (first run) | 8.2 ms | 120 | Includes atomic JSON-write to history |
-| `forensics.preserve` (50 KB CRX) | 14.7 ms | 67 | Full case folder: bytes + manifest + CoC + sidecar SHA |
+| `AlertState.should_send` | 1.5 µs | 628,000 | Stage 4 dedup + escalation decision per alert |
+| `check_publisher` (offline) | 6.8 µs | 141,000 | Stage 1c local validation |
+| `score_permissions` | 11 µs | 87,000 | Stage 1b TTP-calibrated scoring |
+| `enrich` | 18 µs | 51,000 | Stage 4 enrichment per alert |
+| `cred_rotation.generate_playbook` (worst case) | 50 µs | 19,000 | Stage 5 playbook synthesis |
+| `sigma_generator.generate_all_rules` | 90 µs | 11,000 | SIEM export, all 8 rules |
+| `osv._scan_zip_contents` (50 KB ZIP) | 234 µs | 3,900 | Stage 1d local content scan |
+| `parse_crx` (50 KB CRX) | 254 µs | 3,800 | Stage 1a parsing (with zip-bomb limits) |
+| `ttp_loader.load_ttp_library` (warm cache) | 385 µs | 2,500 | Stage 2 pre-API per-call cost |
+| `forensics.verify_case` | 850 µs | 1,120 | Re-hash every artifact + check the HMAC signature |
+| `ttp_loader.load_ttp_library` (cold) | 1.9 ms | 518 | First call after sync |
+| `analyse_version` (first run) | 7.1 ms | 139 | Includes atomic JSON-write to history |
+| `forensics.preserve` (50 KB CRX) | 15.0 ms | 66 | Full case folder: bytes + manifest + signed CoC |
+
+### Changes since 0.2.0
+
+Same machine, v0.2.0 measured as the baseline:
+
+- `score_permissions` 5.3 → 11 µs and `verify_case` 0.39 → 0.85 ms: more
+  scoring rules (optional permissions, host patterns, CSP...) and the new
+  chain-of-custody signature check. Neither is a hot path: once per scan,
+  once per manual verification.
+- `parse_crx` +18%, `preserve` +16%: zip-bomb limits and HMAC signing.
+- `should_send` 1.2 → 1.5 µs: escalation now counts suppressed duplicates
+  and holds its severity. A pre-release version of this code re-filtered
+  every sighting of the last hour on each call (3.5 ms per alert under
+  load); sightings now sit in a bounded queue, so the cost stays flat
+  during an alert storm (`tests/test_alert_dispatcher.py::test_alert_storm_stays_fast`).
+- Everything else is within ±10%.
 
 ## What this means in practice
 
@@ -112,7 +128,7 @@ The slowest operations are at the top:
    file. If the TTP library ever grows to thousands of files,
    pre-concatenate into a single `ttp_library.full.md` artifact at
    sync time.
-4. **`parse_crx` (213 µs)** — bounded by `zipfile.ZipFile` open +
+4. **`parse_crx` (254 µs)** — bounded by `zipfile.ZipFile` open +
    `manifest.json` read. Probably not worth optimising further.
 
 ## CI behaviour

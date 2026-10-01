@@ -28,7 +28,7 @@ from extguard.osv_lookup import _scan_zip_contents
 from extguard.permission_scorer import score_permissions
 from extguard.publisher_checker import check_publisher
 from extguard.remediators import cred_rotation, forensics
-from extguard.sigma_generator import generate_all_rules
+from extguard.sigma_generator import RULES, generate_all_rules
 from extguard.ttp_loader import clear_cache, load_ttp_library
 from extguard.update_velocity import analyse_version
 
@@ -223,6 +223,6 @@ class TestCredRotationBench:
 
 class TestSigmaBench:
     def test_generate_all_rules(self, benchmark):
-        """Time to emit all 6 Sigma YAML rules as strings."""
+        """Time to emit every Sigma YAML rule as a string."""
         result = benchmark(generate_all_rules)
-        assert len(result) == 6
+        assert len(result) == len(RULES)
