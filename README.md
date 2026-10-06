@@ -1,5 +1,10 @@
 # ExtensionGuard
 
+[![PyPI](https://img.shields.io/pypi/v/extensionguard)](https://pypi.org/project/extensionguard/)
+[![Python](https://img.shields.io/pypi/pyversions/extensionguard)](https://pypi.org/project/extensionguard/)
+[![CI](https://github.com/Vimal7747/extensionguard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Vimal7747/extensionguard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/Vimal7747/extensionguard/blob/main/LICENSE)
+
 > Defensive SOC tooling for detecting, alerting on, and remediating malicious browser-extension supply-chain attacks.
 
 ExtensionGuard is a Python pipeline that catches malicious Chrome extensions
@@ -47,7 +52,7 @@ What's in the box:
 | --- | --- |
 | Version | **0.3.0** |
 | Tests | **859** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
-| Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](PERFORMANCE.md)) |
+| Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md)) |
 | Lint | **0 findings** (`ruff check`) |
 | Python | 3.10 – 3.13 |
 | Runtime deps | `anthropic`, `requests`, `websockets`, `flask` |
@@ -56,27 +61,32 @@ What's in the box:
 
 Companion docs:
 
-- [CHANGELOG.md](CHANGELOG.md) — what changed between releases
-- [THREAT_MODEL.md](THREAT_MODEL.md) — trust boundaries + 13 catalogued threats
-- [PERFORMANCE.md](PERFORMANCE.md) — measured baselines for every hot path
-- [RELEASING.md](RELEASING.md) — release checklist for maintainers
+- [CHANGELOG.md](https://github.com/Vimal7747/extensionguard/blob/main/CHANGELOG.md) — what changed between releases
+- [THREAT_MODEL.md](https://github.com/Vimal7747/extensionguard/blob/main/THREAT_MODEL.md) — trust boundaries + 13 catalogued threats
+- [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md) — measured baselines for every hot path
+- [RELEASING.md](https://github.com/Vimal7747/extensionguard/blob/main/RELEASING.md) — release checklist for maintainers
 
 ---
 
 ## Quickstart
 
-### From source
+### From PyPI
+
+```powershell
+pip install extensionguard
+pip install "extensionguard[workspace]"   # + Google Workspace blocking
+```
+
+Each release on PyPI is the same file as the one attached to its
+[GitHub release](https://github.com/Vimal7747/extensionguard/releases), with
+SHA-256 checksums in the release notes.
+
+### From source (for development)
 
 ```powershell
 git clone https://github.com/Vimal7747/extensionguard.git
 cd extensionguard
 pip install -e ".[dev]"
-```
-
-### From PyPI (once published)
-
-```powershell
-pip install extensionguard
 ```
 
 ### From Docker
@@ -561,7 +571,11 @@ change in an upstream API shows up as a failing job instead of a check that
 quietly stops working.
 
 `.github/workflows/release.yml` publishes a release when a `v*` tag is
-pushed - see [RELEASING.md](RELEASING.md).
+pushed - see [RELEASING.md](https://github.com/Vimal7747/extensionguard/blob/main/RELEASING.md).
+
+Every action the workflows use is pinned to a full commit SHA, so a moved or
+hijacked tag can't change what runs; Dependabot (`.github/dependabot.yml`)
+opens a weekly PR to update the pins.
 
 ### Adding a new detection rule
 
@@ -684,7 +698,7 @@ files unless a rule changed.
 
 ## Performance
 
-Measured baselines for every hot path are in [PERFORMANCE.md](PERFORMANCE.md).
+Measured baselines for every hot path are in [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md).
 A single dispatcher handles **20,000+ alerts per second** at the Python
 layer before adapter HTTP calls become the bottleneck. A full
 incident-response sequence (preserve → kill → playbook → PagerDuty)
@@ -700,7 +714,7 @@ pytest tests/benchmarks/ --benchmark-compare=baseline
 
 ## License
 
-[MIT](LICENSE).
+[MIT](https://github.com/Vimal7747/extensionguard/blob/main/LICENSE).
 
 ## Acknowledgments
 
