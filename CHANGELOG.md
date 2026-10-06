@@ -24,11 +24,26 @@ versioning follows [SemVer](https://semver.org/).
   files to PyPI via trusted publishing after approval. RELEASING.md is
   rewritten around it.
 - CI's `build` job smoke-tests the installed wheel on every PR.
+- `.github/dependabot.yml`: a weekly grouped PR keeps the pinned GitHub
+  Actions up to date.
 
 ### Changed
 
 - `chrome_killer.WINDOWS_POLICY_ROOT` names the registry hive (default
   `HKEY_LOCAL_MACHINE`), so tests can use a scratch key under HKCU.
+- Every GitHub Action in the workflows is pinned to a full commit SHA
+  instead of a movable tag, and upgraded to its current Node 24 release
+  (checkout v7, setup-python v7, upload-artifact v7, download-artifact v8,
+  pypi-publish v1.14.2). Node 20 actions were deprecated by GitHub.
+- README: install from PyPI, badges, and absolute links so the PyPI project
+  page doesn't show broken links. `pyproject.toml` adds Changelog and
+  Releases URLs (shown on PyPI from the next release).
+
+### Security
+
+- A re-pointed or compromised action tag (as in the 2025 `tj-actions`
+  incident) can no longer change what runs in CI or the release workflow,
+  which holds the PyPI publishing identity.
 
 ## [0.3.0] — 2026-10-01
 

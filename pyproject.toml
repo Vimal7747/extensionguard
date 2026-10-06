@@ -66,8 +66,10 @@ workspace = [
 
 
 [project.urls]
-Homepage = "https://github.com/Vimal7747/extensionguard"
-Issues   = "https://github.com/Vimal7747/extensionguard/issues"
+Homepage  = "https://github.com/Vimal7747/extensionguard"
+Changelog = "https://github.com/Vimal7747/extensionguard/blob/main/CHANGELOG.md"
+Releases  = "https://github.com/Vimal7747/extensionguard/releases"
+Issues    = "https://github.com/Vimal7747/extensionguard/issues"
 
 
 # Console scripts - what `pip install` adds to the user's PATH.

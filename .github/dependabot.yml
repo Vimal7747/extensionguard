@@ -1,0 +1,23 @@
+# .github/dependabot.yml - keep the pinned GitHub Actions up to date
+#
+# Every `uses:` in .github/workflows is pinned to a full commit SHA (with the
+# version in a comment), so a re-pointed or hijacked action tag can't change
+# what runs in CI or the release workflow. Pins don't update themselves:
+# Dependabot opens one grouped PR a week when any action has a new release,
+# updating the SHA and the version comment. It goes through CI like any PR.
+#
+# Python dependencies are not listed: pyproject.toml uses minimum versions
+# (>=), so there is nothing to bump. Turn on Dependabot *alerts* in
+# Settings > Security to hear about vulnerable dependencies.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "CI"
