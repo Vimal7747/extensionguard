@@ -32,6 +32,10 @@ from extguard.models import is_valid_extension_id
 
 # Chrome enterprise policy locations (per platform)
 WINDOWS_POLICY_KEY = r"Software\Policies\Google\Chrome\ExtensionInstallBlocklist"
+# Registry hive, by winreg constant name. Machine-wide policy lives in HKLM;
+# the tests point this at HKEY_CURRENT_USER and a scratch key so they can
+# exercise the real registry without touching Chrome's policy.
+WINDOWS_POLICY_ROOT = "HKEY_LOCAL_MACHINE"
 LINUX_POLICY_DIR = Path("/etc/opt/chrome/policies/managed")
 LINUX_POLICY_FILE = LINUX_POLICY_DIR / "extguard_blocklist.json"
 MACOS_POLICY_DOMAIN = "com.google.Chrome"
@@ -132,7 +136,7 @@ def block_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
 
     try:
         # Open or create the policy key (CreateKey is idempotent — opens if exists)
-        key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, WINDOWS_POLICY_KEY)
+        key = winreg.CreateKey(getattr(winreg, WINDOWS_POLICY_ROOT), WINDOWS_POLICY_KEY)
         try:
             existing_slot = _find_existing_slot(key, extension_id)
             if existing_slot is not None:
@@ -221,7 +225,7 @@ def unblock_extension_windows(extension_id: str, dry_run: bool = False) -> dict:
 
     try:
         key = winreg.OpenKey(
-            winreg.HKEY_LOCAL_MACHINE, WINDOWS_POLICY_KEY, 0, winreg.KEY_ALL_ACCESS
+            getattr(winreg, WINDOWS_POLICY_ROOT), WINDOWS_POLICY_KEY, 0, winreg.KEY_ALL_ACCESS
         )
         try:
             slot = _find_existing_slot(key, extension_id)

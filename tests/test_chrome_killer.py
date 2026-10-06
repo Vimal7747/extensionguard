@@ -1,8 +1,9 @@
-# tests/test_chrome_killer.py - Chrome extension kill tests (dry-run only)
+# tests/test_chrome_killer.py - Chrome extension kill tests
 #
-# These tests stick strictly to dry-run mode and the cross-platform dispatcher
-# logic. We do NOT touch the real HKLM registry, /etc/opt/chrome/, or macOS
-# managed prefs - that requires admin privileges and would mutate the host.
+# We do NOT touch the real HKLM registry, /etc/opt/chrome/, or macOS managed
+# prefs - that requires admin privileges and would mutate the host. The one
+# exception is TestWindowsRegistryRoundTrip, which uses a throwaway key under
+# HKEY_CURRENT_USER (no admin rights, never Chrome's policy) and deletes it.
 
 import json
 import platform
@@ -325,3 +326,101 @@ class TestWindowsHelpers:
         with patch("winreg.EnumValue", side_effect=enum):
             assert chrome_killer._find_existing_slot(object(), EXT_ID) == 4
             assert chrome_killer._find_existing_slot(object(), "p" * 32) is None
+
+
+# ---------------------------------------------------------------------------
+# The REAL Windows registry - a scratch key under HKEY_CURRENT_USER
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def scratch_registry_key(monkeypatch):
+    """
+    Point chrome_killer at HKCU\\Software\\ExtensionGuardTest-<random> and
+    delete it afterwards. HKCU needs no admin rights, and Chrome's real
+    policy (HKLM\\Software\\Policies) is never touched - safe on a developer's
+    own machine as well as on the CI runner.
+    """
+    import uuid
+    import winreg
+
+    parent = rf"Software\ExtensionGuardTest-{uuid.uuid4().hex}"
+    key_path = rf"{parent}\ExtensionInstallBlocklist"
+    monkeypatch.setattr(chrome_killer, "WINDOWS_POLICY_ROOT", "HKEY_CURRENT_USER")
+    monkeypatch.setattr(chrome_killer, "WINDOWS_POLICY_KEY", key_path)
+    yield key_path
+    for path in (key_path, parent):  # DeleteKey only removes keys without subkeys
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, path)
+        except FileNotFoundError:
+            pass
+
+
+def _registry_values(key_path: str) -> dict:
+    """{value name: data} of the scratch key, read with plain winreg."""
+    import winreg
+
+    values = {}
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+        index = 0
+        while True:
+            try:
+                name, data, _type = winreg.EnumValue(key, index)
+            except OSError:
+                return values
+            values[name] = data
+            index += 1
+
+
+@pytest.mark.skipif(platform.system() != "Windows", reason="needs the real Windows registry")
+class TestWindowsRegistryRoundTrip:
+    """
+    The mocked tests above assume how winreg behaves (EnumValue raises OSError
+    at the end, QueryValueEx raises FileNotFoundError for a missing value).
+    These run the real thing, so a wrong assumption fails here - on the
+    Windows CI job, or on any Windows machine.
+    """
+
+    def test_block_is_idempotent_and_numbers_slots(self, scratch_registry_key):
+        first = chrome_killer.block_extension_windows(EXT_ID)
+        assert first["ok"] and first["applied"] and first["details"]["slot"] == 1
+
+        again = chrome_killer.block_extension_windows(EXT_ID)
+        assert again["ok"] and again["details"]["already_blocked"] is True
+
+        second = chrome_killer.block_extension_windows(EXT_ID_2)
+        assert second["details"]["slot"] == 2
+        assert _registry_values(scratch_registry_key) == {"1": EXT_ID, "2": EXT_ID_2}
+
+    def test_id_after_a_gap_is_found_not_duplicated(self, scratch_registry_key):
+        import winreg
+
+        # Slots 1, 2 and 4 - slot 3 was deleted by hand
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, scratch_registry_key) as key:
+            for slot, ext_id in (("1", EXT_ID_2), ("2", EXT_ID_3), ("4", EXT_ID)):
+                winreg.SetValueEx(key, slot, 0, winreg.REG_SZ, ext_id)
+
+        result = chrome_killer.block_extension_windows(EXT_ID)
+        assert result["details"]["already_blocked"] is True
+        assert result["details"]["slot"] == 4
+        assert list(_registry_values(scratch_registry_key).values()).count(EXT_ID) == 1
+
+    def test_unblock_removes_only_that_extension(self, scratch_registry_key):
+        chrome_killer.block_extension_windows(EXT_ID)
+        chrome_killer.block_extension_windows(EXT_ID_2)
+
+        removed = chrome_killer.unblock_extension_windows(EXT_ID)
+        assert removed["ok"] and removed["details"]["removed_slot"] == 1
+        assert _registry_values(scratch_registry_key) == {"2": EXT_ID_2}
+
+        missing = chrome_killer.unblock_extension_windows(EXT_ID)
+        assert missing["ok"] and "not in the blocklist" in missing["details"]["note"]
+
+    def test_freed_slot_is_reused(self, scratch_registry_key):
+        chrome_killer.block_extension_windows(EXT_ID)
+        chrome_killer.block_extension_windows(EXT_ID_2)
+        chrome_killer.unblock_extension_windows(EXT_ID)
+
+        result = chrome_killer.block_extension_windows(EXT_ID_3)
+        assert result["details"]["slot"] == 1
+        assert _registry_values(scratch_registry_key) == {"1": EXT_ID_3, "2": EXT_ID_2}

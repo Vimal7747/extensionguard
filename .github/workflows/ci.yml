@@ -1,13 +1,20 @@
 # .github/workflows/ci.yml - Continuous integration for ExtensionGuard
 #
-# Runs on every push and pull request. Three parallel jobs:
-#   1. test  - pytest across Python 3.10 / 3.11 / 3.12 / 3.13 on Ubuntu
-#   2. lint  - ruff check + ruff format --check
-#   3. build - confirm `python -m build` produces a wheel
+# Runs on every push to main and every pull request. Parallel jobs:
+#   1. test          - pytest across Python 3.10 / 3.11 / 3.12 / 3.13 on Ubuntu
+#   2. test-windows  - pytest on Windows, including a real-registry round trip
+#                      of the blocklist code (a scratch key under HKCU)
+#   3. lint          - ruff check + ruff format --check
+#   4. build         - confirm `python -m build` produces a wheel + sdist
+#   5. docker        - build the image and smoke-test it: every CLI, a scan,
+#                      the dashboard health check, non-root user, writable volumes
+#   6. benchmarks    - run tests/benchmarks/ (they are not part of `pytest`)
+#                      and keep the timings as an artifact
 #
-# The matrix is deliberately small. Add macOS / Windows runners later if you
-# start writing Windows-specific code paths (the chrome_killer.py registry
-# code is Windows-only but we test it via mocks, so Ubuntu is sufficient).
+# Job names matter: the "Protect main" ruleset requires lint, build and
+# test (3.10) ... test (3.13) by name. Renaming a job or changing the test
+# matrix renames its check, and PRs would wait forever for the old name -
+# update the ruleset in the same change. New platforms get their own job.
 
 name: CI
 
@@ -24,7 +31,7 @@ concurrency:
 
 jobs:
   # ----------------------------------------------------------------------
-  # Test matrix
+  # Test matrix (Ubuntu)
   # ----------------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
@@ -48,6 +55,31 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run pytest
+        run: pytest
+
+  # ----------------------------------------------------------------------
+  # Windows - most SOC workstations, and the only platform where the
+  # registry blocklist code runs for real
+  # ----------------------------------------------------------------------
+  test-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run pytest
+        # Includes TestWindowsRegistryRoundTrip (skipped on Linux)
         run: pytest
 
   # ----------------------------------------------------------------------
@@ -105,3 +137,97 @@ jobs:
         with:
           name: dist
           path: dist/
+
+  # ----------------------------------------------------------------------
+  # Docker image - build it and check the container actually works
+  # ----------------------------------------------------------------------
+  docker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t extensionguard:ci .
+
+      - name: Every console script starts
+        run: |
+          docker run --rm --entrypoint sh extensionguard:ci -c '
+            for cmd in extguard extguard-monitor extguard-dispatch extguard-remediate \
+                       extguard-dashboard extguard-ttp-sync extguard-webhook extguard-sigma; do
+              "$cmd" --help > /dev/null || { echo "FAILED: $cmd --help"; exit 1; }
+              echo "ok: $cmd"
+            done'
+
+      - name: A scan works inside the container
+        run: |
+          set +e
+          docker run --rm -v "$PWD/test_fixtures:/fixtures:ro" extensionguard:ci \
+            extguard /fixtures/teamccp_sim_manifest.json --no-ai --offline --json --fail-on high \
+            > scan.json
+          code=$?
+          set -e
+          cat scan.json
+          # The fixture is the TeamPCP attack shape: expect exit 1 (verdict >= high)
+          test "$code" -eq 1
+          python3 -c "import json; r = json.load(open('scan.json')); assert r['risk_level'] in ('high', 'critical'), r['risk_level']"
+
+      - name: Dashboard container serves /api/health as a non-root user
+        run: |
+          docker run -d --name dash -p 127.0.0.1:5000:5000 extensionguard:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:5000/api/health > health.json; then break; fi
+            sleep 1
+          done
+          cat health.json
+          python3 -c "import json; h = json.load(open('health.json')); assert h['status'] == 'ok', h"
+          test "$(docker exec dash id -u)" != "0"
+          # The data directories the volumes mount over must be writable by that user
+          docker exec dash sh -c 'for d in /var/lib/extguard/quarantine /var/lib/extguard/ttp/library /var/lib/extguard/webhook; do touch "$d/.w" && rm "$d/.w" || exit 1; done'
+          docker exec dash extguard-ttp-sync --status
+
+      - name: Dashboard logs (on failure)
+        if: failure()
+        run: docker logs dash || true
+
+      - name: docker-compose.yml is valid
+        run: |
+          touch alerts.jsonl
+          docker compose config --quiet
+          docker compose --profile webhook config --quiet
+
+      - name: Clean up
+        if: always()
+        run: docker rm -f dash || true
+
+  # ----------------------------------------------------------------------
+  # Benchmarks - excluded from `pytest` (pytest.ini), so without this job a
+  # broken or stale benchmark is only noticed at release time
+  # ----------------------------------------------------------------------
+  benchmarks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run the benchmark suite
+        # Shared runners are too noisy for a pass/fail speed gate; this
+        # catches broken benchmarks, and the JSON lets you compare runs.
+        run: pytest tests/benchmarks/ --benchmark-only --benchmark-json=benchmark.json
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: benchmark.json

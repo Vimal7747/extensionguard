@@ -106,6 +106,10 @@ def site(tmp_path):
 def chrome():
     exe = _find_chrome()
     if not exe:
+        if os.environ.get("CI"):
+            # GitHub's runners ship Chrome. A skip there would let the weekly
+            # live job pass without ever testing the monitor.
+            pytest.fail("Chrome not found on the CI runner - set EXTGUARD_CHROME")
         pytest.skip("Chrome not found - set EXTGUARD_CHROME")
     port = _free_port()
     profile = tempfile.mkdtemp()

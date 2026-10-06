@@ -73,7 +73,8 @@ extguard-sigma --help
 extguard-webhook --help
 deactivate
 
-# Verify the Docker image builds
+# Verify the Docker image builds (CI's `docker` job already builds and
+# smoke-tests it on every PR - this is only needed to publish the image)
 docker build -t extensionguard:0.3.0 .
 docker run --rm extensionguard:0.3.0 extguard --help
 ```

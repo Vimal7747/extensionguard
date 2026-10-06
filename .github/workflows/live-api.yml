@@ -3,7 +3,12 @@
 # The normal CI run replays recorded responses. This job calls the live
 # Chrome Web Store and OSV services, so an upstream change (a renamed field,
 # a new required parameter, a removed query type) is caught within a week
-# instead of silently turning a check into a no-op.
+# instead of silently turning a check into a no-op. It also runs the
+# behavioural monitor against the runner's real (headless) Chrome.
+#
+# Runs weekly, on demand, and on any PR that changes the live tests or this
+# workflow - so a change to them is proven before it merges. It is not a
+# required check: an outage at Google or OSV must not block unrelated PRs.
 
 name: Live API contract
 
@@ -11,6 +16,11 @@ on:
   schedule:
     - cron: "17 6 * * 1"   # Mondays 06:17 UTC
   workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/live-api.yml"
+      - "tests/test_live_*.py"
 
 jobs:
   live-api:
@@ -29,7 +39,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Chrome is available for the monitor test
+        run: google-chrome --version
+
       - name: Run live contract tests
         env:
           EXTGUARD_LIVE_TESTS: "1"
-        run: pytest -m live -v
+        # -rs prints the reason for any skipped test. tests/test_live_monitor.py
+        # fails (instead of skipping) when Chrome is missing on CI.
+        run: pytest -m live -v -rs
