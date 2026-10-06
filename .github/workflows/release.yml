@@ -1,0 +1,229 @@
+# .github/workflows/release.yml - Build, verify and publish a release
+#
+# Triggered by pushing a version tag (v0.4.0, v0.4.0rc1, ...) on a commit
+# that is already on main. Steps:
+#
+#   1. build   - check the tag, pyproject.toml version and CHANGELOG agree;
+#                build the wheel + sdist from the tagged commit; twine check;
+#                install the wheel in a fresh virtualenv and smoke-test it;
+#                compute SHA-256 checksums
+#   2. github  - create the GitHub release: CHANGELOG section as the notes,
+#                wheel + sdist + SHA256SUMS.txt attached
+#   3. pypi    - publish the SAME files to PyPI with trusted publishing (no
+#                stored password or token). Waits for approval in the `pypi`
+#                environment, and only runs when the repository variable
+#                PYPI_PUBLISH is "true" - see RELEASING.md for the setup.
+#
+# Also runs:
+#   - by hand (Actions > Release > Run workflow) for an EXISTING tag. If its
+#     GitHub release already exists, the attached files are downloaded and
+#     re-verified instead of rebuilt, so PyPI gets the exact files that were
+#     released (used to put 0.3.0 on PyPI after the fact).
+#   - on PRs that change this workflow or tools/ - a dry run of step 1 on the
+#     PR's own code, so the release pipeline is tested before it is needed.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, e.g. v0.3.0"
+        required: true
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/release.yml"
+      - "tools/**"
+
+permissions:
+  contents: read
+
+# Never run two releases of the same tag at once, and never cancel one halfway
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ----------------------------------------------------------------------
+  # 1. Verify + build + smoke-test
+  # ----------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.target.outputs.tag }}
+      dry_run: ${{ steps.target.outputs.dry_run }}
+      release_exists: ${{ steps.target.outputs.release_exists }}
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history + tags: needed to check the tag is on main
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Keep the release tools from this checkout
+        # A hand-run release of an older tag checks that tag out below; the
+        # tools must still come from the current workflow's commit.
+        run: cp -r tools "$RUNNER_TEMP/tools"
+
+      - name: Work out what to release
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            # Dry run on the PR's own code, as if releasing its current version
+            tag="v$(python "$RUNNER_TEMP/tools/release_check.py" --print-version)"
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          else
+            tag="${INPUT_TAG:-$GITHUB_REF_NAME}"
+            git rev-parse --verify --quiet "refs/tags/$tag^{commit}" > /dev/null \
+              || { echo "::error::No tag named $tag"; exit 1; }
+            git checkout --quiet "refs/tags/$tag"
+            # Only commits that went through a PR into main are released
+            git merge-base --is-ancestor HEAD origin/main \
+              || { echo "::error::$tag points at a commit that is not on main"; exit 1; }
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              echo "release_exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "release_exists=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag from $(git rev-parse --short HEAD) (event: $EVENT)"
+
+      - name: Tag, pyproject.toml and CHANGELOG agree
+        id: check
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+          PYPI_FLAG: ${{ vars.PYPI_PUBLISH == 'true' && '--pypi' || '' }}
+        run: python "$RUNNER_TEMP/tools/release_check.py" --tag "$TAG" --notes "$RUNNER_TEMP/notes.md" $PYPI_FLAG
+
+      - name: Build the wheel + sdist (or fetch the already-released files)
+        env:
+          TAG: ${{ steps.target.outputs.tag }}
+          EXISTS: ${{ steps.target.outputs.release_exists }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$EXISTS" = "true" ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dist \
+              --pattern "*.whl" --pattern "*.tar.gz"
+          else
+            python -m pip install --upgrade pip build
+            python -m build
+          fi
+          ls -l dist
+
+      - name: twine check
+        run: |
+          python -m pip install twine
+          twine check --strict dist/*
+
+      - name: Smoke-test the wheel in a fresh virtualenv
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: python "$RUNNER_TEMP/tools/smoke_test.py" dist/*.whl --expect-version "$VERSION"
+
+      - name: Checksums
+        run: |
+          (cd dist && sha256sum -- *) > "$RUNNER_TEMP/SHA256SUMS.txt"
+          cat "$RUNNER_TEMP/SHA256SUMS.txt"
+          {
+            echo
+            echo "## Checksums (SHA-256)"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/SHA256SUMS.txt"
+            echo '```'
+          } >> "$RUNNER_TEMP/notes.md"
+          cp "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/SHA256SUMS.txt" .
+
+      - name: Upload the release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: dist/
+          if-no-files-found: error
+
+      - name: Upload the notes + checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: |
+            notes.md
+            SHA256SUMS.txt
+          if-no-files-found: error
+
+  # ----------------------------------------------------------------------
+  # 2. GitHub release
+  # ----------------------------------------------------------------------
+  github:
+    needs: build
+    if: needs.build.outputs.dry_run != 'true' && needs.build.outputs.release_exists != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          flags=""
+          if [ "$PRERELEASE" = "true" ]; then flags="--prerelease"; fi
+          gh release create "$TAG" dist/* SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ExtensionGuard $VERSION" \
+            --notes-file notes.md \
+            --verify-tag $flags
+
+  # ----------------------------------------------------------------------
+  # 3. PyPI (trusted publishing)
+  # ----------------------------------------------------------------------
+  pypi:
+    needs: [build, github]
+    # Runs after the GitHub release was created - or right away when the tag
+    # already had one (a hand-run publish of an existing release).
+    if: >-
+      always()
+      && needs.build.result == 'success'
+      && needs.build.outputs.dry_run != 'true'
+      && (needs.github.result == 'success' || needs.github.result == 'skipped')
+      && vars.PYPI_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/extensionguard/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write   # trusted publishing: PyPI verifies this workflow's identity
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
