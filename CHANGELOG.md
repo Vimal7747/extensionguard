@@ -5,6 +5,23 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- CI now covers what used to be checked by hand, or not at all:
+  - a Windows test job, with a real registry round trip of the blocklist
+    code (`TestWindowsRegistryRoundTrip`, a scratch key under HKCU);
+  - a Docker job that builds and smoke-tests the image and validates
+    `docker-compose.yml`;
+  - a benchmark job.
+- `live-api.yml` also runs on PRs that change the live tests, and the
+  real-Chrome monitor test fails instead of skipping when Chrome is missing
+  on CI.
+
+### Changed
+
+- `chrome_killer.WINDOWS_POLICY_ROOT` names the registry hive (default
+  `HKEY_LOCAL_MACHINE`), so tests can use a scratch key under HKCU.
+
 ## [0.3.0] — 2026-10-01
 
 Fixes the correctness and safety bugs a full review (2026-09-29) found in 0.2.0. Several

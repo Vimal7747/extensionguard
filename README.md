@@ -46,7 +46,7 @@ What's in the box:
 | Property | Value |
 | --- | --- |
 | Version | **0.3.0** |
-| Tests | **829 passing** (`pytest`) + 5 opt-in live tests (real APIs, headless Chrome) |
+| Tests | **833** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](PERFORMANCE.md)) |
 | Lint | **0 findings** (`ruff check`) |
 | Python | 3.10 – 3.13 |
@@ -497,7 +497,7 @@ extguard/                         (repository root)
     dashboard_templates/          - Jinja2 templates for the Flask UI
     dashboard_static/             - CSS for the Flask UI
 
-  tests/                          - 829 pytest tests
+  tests/                          - 833 pytest tests
     benchmarks/                   - 13 pytest-benchmark performance baselines
     fixtures/recorded/            - Real API responses the tests replay
     test_live_apis.py             - Opt-in contract tests against real APIs
@@ -541,9 +541,20 @@ ruff format --check .
 python -m build
 ```
 
-The CI workflow (`.github/workflows/ci.yml`) runs pytest across Python
-3.10/3.11/3.12/3.13 on Ubuntu plus ruff + wheel build on every push.
-`.github/workflows/live-api.yml` runs the live contract tests weekly, so a
+The CI workflow (`.github/workflows/ci.yml`) runs on every push to `main`
+and every pull request:
+
+- pytest on Python 3.10 / 3.11 / 3.12 / 3.13 (Ubuntu) and on Windows, where
+  the blocklist code does a real registry round trip (a scratch key under
+  HKCU - never Chrome's policy);
+- ruff, and a wheel + sdist build;
+- a Docker job that builds the image and checks every CLI, a scan, the
+  dashboard health endpoint, the non-root user and the writable data volumes,
+  and validates `docker-compose.yml`;
+- the benchmark suite (timings uploaded as an artifact).
+
+`.github/workflows/live-api.yml` runs the live contract tests and the
+real-Chrome monitor test weekly, and on any PR that changes them, so a
 change in an upstream API shows up as a failing job instead of a check that
 quietly stops working.
 
