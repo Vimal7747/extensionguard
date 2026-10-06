@@ -16,6 +16,14 @@ versioning follows [SemVer](https://semver.org/).
 - `live-api.yml` also runs on PRs that change the live tests, and the
   real-Chrome monitor test fails instead of skipping when Chrome is missing
   on CI.
+- Automated releases (`.github/workflows/release.yml`): pushing a `v*` tag on
+  `main` verifies the tag against `pyproject.toml` and the dated CHANGELOG
+  section (`tools/release_check.py`), builds and smoke-tests the wheel in a
+  fresh virtualenv (`tools/smoke_test.py`), creates the GitHub release with
+  the CHANGELOG notes, files and SHA-256 checksums, and publishes the same
+  files to PyPI via trusted publishing after approval. RELEASING.md is
+  rewritten around it.
+- CI's `build` job smoke-tests the installed wheel on every PR.
 
 ### Changed
 

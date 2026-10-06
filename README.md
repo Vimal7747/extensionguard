@@ -46,7 +46,7 @@ What's in the box:
 | Property | Value |
 | --- | --- |
 | Version | **0.3.0** |
-| Tests | **833** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
+| Tests | **859** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](PERFORMANCE.md)) |
 | Lint | **0 findings** (`ruff check`) |
 | Python | 3.10 – 3.13 |
@@ -497,11 +497,12 @@ extguard/                         (repository root)
     dashboard_templates/          - Jinja2 templates for the Flask UI
     dashboard_static/             - CSS for the Flask UI
 
-  tests/                          - 833 pytest tests
+  tests/                          - 859 pytest tests
     benchmarks/                   - 13 pytest-benchmark performance baselines
     fixtures/recorded/            - Real API responses the tests replay
     test_live_apis.py             - Opt-in contract tests against real APIs
     test_live_monitor.py          - Opt-in monitor test on a headless Chrome
+  tools/                          - Release checks + wheel smoke test (not shipped)
   test_fixtures/                  - Simulated malicious + benign manifests
 
   extguard.conf.json              - Configuration template
@@ -547,7 +548,8 @@ and every pull request:
 - pytest on Python 3.10 / 3.11 / 3.12 / 3.13 (Ubuntu) and on Windows, where
   the blocklist code does a real registry round trip (a scratch key under
   HKCU - never Chrome's policy);
-- ruff, and a wheel + sdist build;
+- ruff, and a wheel + sdist build whose wheel is installed in a fresh
+  virtualenv and smoke-tested (`tools/smoke_test.py`);
 - a Docker job that builds the image and checks every CLI, a scan, the
   dashboard health endpoint, the non-root user and the writable data volumes,
   and validates `docker-compose.yml`;
@@ -557,6 +559,9 @@ and every pull request:
 real-Chrome monitor test weekly, and on any PR that changes them, so a
 change in an upstream API shows up as a failing job instead of a check that
 quietly stops working.
+
+`.github/workflows/release.yml` publishes a release when a `v*` tag is
+pushed - see [RELEASING.md](RELEASING.md).
 
 ### Adding a new detection rule
 

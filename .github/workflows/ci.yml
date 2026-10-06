@@ -5,7 +5,8 @@
 #   2. test-windows  - pytest on Windows, including a real-registry round trip
 #                      of the blocklist code (a scratch key under HKCU)
 #   3. lint          - ruff check + ruff format --check
-#   4. build         - confirm `python -m build` produces a wheel + sdist
+#   4. build         - build the wheel + sdist and smoke-test the installed
+#                      wheel (tools/smoke_test.py)
 #   5. docker        - build the image and smoke-test it: every CLI, a scan,
 #                      the dashboard health check, non-root user, writable volumes
 #   6. benchmarks    - run tests/benchmarks/ (they are not part of `pytest`)
@@ -131,6 +132,10 @@ jobs:
 
       - name: Build wheel + sdist
         run: python -m build
+
+      - name: Smoke-test the wheel in a fresh virtualenv
+        # The same check the release workflow runs before publishing
+        run: python tools/smoke_test.py dist/*.whl --expect-version "$(python tools/release_check.py --print-version)"
 
       - name: Upload built artifacts
         uses: actions/upload-artifact@v4
