@@ -73,7 +73,7 @@ git push origin v0.4.0
 
 Pushing the tag starts **Actions > Release**:
 
-1. **build** - refuses to continue unless the tag is on `main` and the tag,
+1. **package** - refuses to continue unless the tag is on `main` and the tag,
    `pyproject.toml` and the dated CHANGELOG section agree
    (`tools/release_check.py`). Then it builds the wheel + sdist from the
    tagged commit, runs `twine check --strict`, installs the wheel in a fresh
@@ -85,7 +85,7 @@ Pushing the tag starts **Actions > Release**:
 3. **pypi** - uploads the same two files to PyPI. It waits for you to
    **approve** it (the run page shows "Review deployments").
 
-If **build** fails, nothing is published - fix the problem in a PR, then
+If **package** fails, nothing is published - fix the problem in a PR, then
 delete and re-create the tag on the new commit
 (`git push origin :refs/tags/v0.4.0`, tag again, push). If **pypi** fails
 after the GitHub release exists, re-run just that job.
