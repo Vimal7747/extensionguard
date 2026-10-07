@@ -51,7 +51,7 @@ What's in the box:
 | Property | Value |
 | --- | --- |
 | Version | **0.3.0** |
-| Tests | **859** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
+| Tests | **897** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md)) |
 | Lint | **0 findings** (`ruff check`) |
 | Python | 3.10 – 3.13 |
@@ -209,9 +209,9 @@ Chrome restarts (`--once` to exit instead).
 | Rule | Detects | Severity |
 | --- | --- | --- |
 | RULE-01 | POST to exfil-style hosting (`*.workers.dev`, tunnels...); regular beaconing | high / critical |
-| RULE-02 | Tokens, passwords or cookie dumps sent to a host they don't belong to | high / critical |
+| RULE-02 | Tokens, passwords or cookie dumps sent to a host they don't belong to (a JWT going to its own issuer's site is normal) | high / critical |
 | RULE-03 | Calls to GitHub / npm / cloud / SSO APIs; authenticated state-changing requests | medium / high |
-| RULE-04 | Large encoded blobs or credentials staged in extension storage | high / critical |
+| RULE-04 | Other services' credentials or cookie dumps staged in extension storage; large encoded blobs on their own are medium | medium / critical |
 | RULE-05 | `chrome.management` used to disable or uninstall another extension | critical |
 | RULE-06 | `eval` / `new Function` / injected remote scripts; obfuscated eval chains | medium / high |
 | RULE-07 | `chrome.cookies.getAll` bulk reads; `document.cookie` reads on high-value sites | medium / high |
@@ -507,7 +507,7 @@ extguard/                         (repository root)
     dashboard_templates/          - Jinja2 templates for the Flask UI
     dashboard_static/             - CSS for the Flask UI
 
-  tests/                          - 859 pytest tests
+  tests/                          - 897 pytest tests
     benchmarks/                   - 13 pytest-benchmark performance baselines
     fixtures/recorded/            - Real API responses the tests replay
     test_live_apis.py             - Opt-in contract tests against real APIs

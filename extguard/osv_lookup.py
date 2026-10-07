@@ -24,6 +24,7 @@ import io
 import json
 import re
 import zipfile
+from urllib.parse import urlparse
 
 from extguard.crx_parser import check_zip_limits, read_zip_member
 
@@ -51,6 +52,16 @@ SUSPICIOUS_CDN_PATTERNS = [
     r"raw\.githubusercontent\.com",
     r"gist\.githubusercontent\.com",
 ]
+
+# A CDN URL only counts as remote CODE when it points at a script: a .js /
+# .mjs / .cjs file, an npm package entry point (jsdelivr /npm/..., unpkg),
+# or a URL handed to importScripts(), import() or <script src>. Images,
+# checksum files and config data on the same CDNs are not code - flagging
+# them hit Grammarly (an emoji .png), Bitwarden (.md5) and Dark Reader (config).
+SCRIPT_SUFFIXES = (".js", ".mjs", ".cjs")
+_LOAD_CONTEXT = re.compile(
+    r"""(?:importScripts|import)\s*\(\s*['"`]$|<script\b[^>]*\bsrc\s*=\s*['"]?$""", re.IGNORECASE
+)
 
 # Files inside the ZIP we read for npm package metadata
 JS_PACKAGE_FILES = {"package.json", "package-lock.json"}
@@ -236,12 +247,30 @@ def _scan_zip_contents(zip_bytes: bytes) -> tuple:
                 if is_js:
                     content = data.decode("utf-8", errors="ignore")
                     for pattern in SUSPICIOUS_CDN_PATTERNS:
-                        cdn_refs.extend(re.findall(r"https?://" + pattern + r"[^\s'\"]+", content))
+                        for match in re.finditer(r"https?://" + pattern + r"[^\s'\"`)]+", content):
+                            preceding = content[max(0, match.start() - 40) : match.start()]
+                            if _is_remote_script(match.group(0), preceding):
+                                cdn_refs.append(match.group(0))
 
     except (ValueError, zipfile.BadZipFile) as exc:
         errors.append(str(exc))
 
     return npm_packages, sorted(set(cdn_refs)), errors
+
+
+def _is_remote_script(url: str, preceding: str) -> bool:
+    """True when a CDN URL loads code (see SCRIPT_SUFFIXES above)."""
+    parsed = urlparse(url)
+    path = parsed.path.lower()
+    if path.endswith(SCRIPT_SUFFIXES):
+        return True
+    last_segment = path.rsplit("/", 1)[-1]
+    is_package = (parsed.hostname == "unpkg.com" or path.startswith("/npm/")) and (
+        "." not in last_segment or "@" in last_segment
+    )
+    if is_package:
+        return True  # https://cdn.jsdelivr.net/npm/lodash@4 serves the package's JS
+    return bool(_LOAD_CONTEXT.search(preceding))
 
 
 def _npm_deps_from(pkg_data, basename: str) -> list:

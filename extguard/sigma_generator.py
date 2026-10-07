@@ -50,7 +50,7 @@ AUTHOR = "ExtensionGuard (https://github.com/Vimal7747/extensionguard)"
 
 # Bump RULES_MODIFIED when a rule definition changes (not on every run)
 RULES_CREATED = "2026-05-22"
-RULES_MODIFIED = "2026-09-29"
+RULES_MODIFIED = "2026-10-07"
 
 # Log source for events forwarded by extguard-dispatch
 SENSOR_LOGSOURCE = {"product": "extensionguard", "service": "behavioral_monitor"}
@@ -163,12 +163,13 @@ SENSOR_RULES = [
         "rule_key": "RULE-04",
         "title": "ExtensionGuard: Data Staged in Extension Storage",
         "description": (
-            "A browser extension wrote a large encoded blob or credential-like\n"
-            "data into chrome.storage / localStorage (critical with credentials)."
+            "A browser extension wrote another service's credentials, a cookie\n"
+            "dump, or a large encoded blob into chrome.storage / localStorage\n"
+            "(critical with credentials; a blob alone is medium)."
         ),
         "references": ["https://attack.mitre.org/techniques/T1074/"],
         "tags": ["attack.collection", "attack.t1074", "attack.t1555.003"],
-        "level": "high",
+        "level": "medium",
     },
     {
         "rule_key": "RULE-05",

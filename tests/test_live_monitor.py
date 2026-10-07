@@ -46,7 +46,7 @@ FAKE_EXT = "a" * 32
 
 PAGE = """<!doctype html><title>stand-in extension page</title>
 <script>
-localStorage.setItem("s_cache", "A".repeat(300));
+localStorage.setItem("s_cache", "A".repeat(3000));
 fetch("/collect", {method: "POST", body: JSON.stringify({t: "ghp_" + "x".repeat(36)})});
 eval(atob("Y29uc29sZS5sb2coImR5bmFtaWMiKQ=="));
 navigator.serviceWorker.register("/sw.js");

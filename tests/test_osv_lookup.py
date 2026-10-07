@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from extguard import crx_parser, osv_lookup
 from extguard.osv_lookup import (
     _npm_deps_from,
@@ -162,6 +164,32 @@ class TestZipScanning:
         _, cdn_refs, _ = _scan_zip_contents(zip_bytes)
         assert any("jsdelivr" in r for r in cdn_refs)
         assert any("unpkg.com" in r for r in cdn_refs)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            # Real-extension test (2026-10-07): data and images, not code
+            "https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72/2615.png",
+            "https://raw.githubusercontent.com/Phishing-Database/checksums/refs/heads/master/x.txt.md5",
+            "https://raw.githubusercontent.com/darkreader/darkreader/main/src/config",
+            "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css",
+        ],
+    )
+    def test_cdn_data_and_images_are_not_remote_code(self, url):
+        zip_bytes = _make_zip({"background.js": f'fetch("{url}").then(r => r.text());\n'})
+        assert _scan_zip_contents(zip_bytes)[1] == []
+
+    @pytest.mark.parametrize(
+        "code",
+        [
+            'const s = "https://unpkg.com/react@18/umd/react.production.min.js";',
+            'const m = "https://cdn.jsdelivr.net/npm/lodash@4";',
+            "importScripts('https://raw.githubusercontent.com/x/y/main/payload');",
+            "el.innerHTML = '<script src=\"https://cdn.jsdelivr.net/gh/x/y/run\"></script>';",
+        ],
+    )
+    def test_scripts_and_packages_are_remote_code(self, code):
+        assert _scan_zip_contents(_make_zip({"background.js": code}))[1]
 
     def test_clean_zip_no_findings(self):
         zip_bytes = _make_zip(
