@@ -108,6 +108,10 @@ def check_publisher(
       cws_version        str or None
       cws_sha256         str or None  (hash of the .crx the store serves)
       store_build_match  True / False / None (None = couldn't compare)
+      store_relation     "identical" / "tampered" (same version, other bytes) /
+                         "newer_than_store" / "older_than_store" / None
+      identity_conflict  bool   (signed ID without a matching key proof, or a
+                                 manifest key that contradicts the signature)
       pub_score          int    (0-30 publisher-specific risk contribution)
       flags              list[str]
     """
@@ -122,16 +126,19 @@ def check_publisher(
         "cws_version": None,
         "cws_sha256": None,
         "store_build_match": None,
+        "store_relation": None,
+        "identity_conflict": False,
         "pub_score": 0,
         "flags": flags,
     }
 
     # --- 1. Work out the extension ID --------------------------------------
-    ext_id, id_source, id_flags, id_score = _resolve_extension_id(
+    ext_id, id_source, id_flags, id_score, identity_conflict = _resolve_extension_id(
         manifest, crx_header_bytes, crx2_public_key
     )
     result["extension_id"] = ext_id
     result["id_source"] = id_source
+    result["identity_conflict"] = identity_conflict
     flags.extend(id_flags)
     score += id_score
 
@@ -186,10 +193,11 @@ def check_publisher(
                 f"Extension ID {ext_id} not found on Chrome Web Store - sideloaded or unpublished"
             )
         else:
-            store_flags, store_score, build_match = _compare_with_store(
+            store_flags, store_score, build_match, relation = _compare_with_store(
                 manifest.version, crx_sha256, cws["version"], cws["sha256"]
             )
             result["store_build_match"] = build_match
+            result["store_relation"] = relation
             flags.extend(store_flags)
             score += store_score
 
@@ -208,12 +216,13 @@ def _resolve_extension_id(manifest, crx3_header, crx2_public_key) -> tuple:
       1. the signed crx_id in a CRX3 header (what Chrome itself uses)
       2. the CRX2 public key
       3. the manifest "key" field
-    Returns (ext_id, id_source, flags, score).
+    Returns (ext_id, id_source, flags, score, identity_conflict).
     """
     flags: list = []
     score = 0
     ext_id = None
     source = None
+    conflict = False
 
     if crx3_header:
         try:
@@ -232,6 +241,7 @@ def _resolve_extension_id(manifest, crx3_header, crx2_public_key) -> tuple:
                     "malformed or forged package"
                 )
                 score += 15
+                conflict = True
     elif crx2_public_key:
         ext_id = _compute_extension_id(crx2_public_key)
         source = "crx2-key"
@@ -248,12 +258,13 @@ def _resolve_extension_id(manifest, crx3_header, crx2_public_key) -> tuple:
                 f"signed as {ext_id} - repackaged extension posing as another"
             )
             score += 10
+            conflict = True
 
     if ext_id is None:
         flags.append("No signing key found - cannot verify extension ID (sideloaded/dev mode?)")
         score += 5
 
-    return ext_id, source, flags, score
+    return ext_id, source, flags, score, conflict
 
 
 def _decode_manifest_key(manifest: ManifestInfo) -> bytes | None:
@@ -343,7 +354,8 @@ def _id_from_hash_prefix(prefix16: bytes) -> str:
 def _compare_with_store(local_version, crx_sha256, store_version, store_sha256) -> tuple:
     """
     Compare the scanned package with what the Web Store currently serves.
-    Returns (flags, score, store_build_match).
+    Returns (flags, score, store_build_match, relation) - relation is
+    "identical", "tampered", "newer_than_store", "older_than_store" or None.
     """
     flags: list = []
     score = 0
@@ -351,33 +363,36 @@ def _compare_with_store(local_version, crx_sha256, store_version, store_sha256) 
     # Strongest signal: are these the exact same bytes the store serves?
     if crx_sha256 and store_sha256:
         if crx_sha256.lower() == store_sha256.lower():
-            return flags, 0, True
+            return flags, 0, True, "identical"
         if store_version and local_version == store_version:
             flags.append(
                 f"Same version as the Web Store ({store_version}) but different bytes - "
                 "repackaged or tampered build"
             )
-            return flags, 25, False
+            return flags, 25, False, "tampered"
         # Different version, so different bytes are expected - fall through
         # to the version comparison below.
 
     build_match = False if (crx_sha256 and store_sha256) else None
+    relation = None
 
     if store_version and local_version != store_version:
         local = _parse_version(local_version)
         store = _parse_version(store_version)
         if local and store and _tuple_gt(local, store):
             score += 20
+            relation = "newer_than_store"
             flags.append(
                 f"Local version {local_version} is NEWER than the Web Store's "
                 f"{store_version} - this build did not come from the store"
             )
         elif local and store:
+            relation = "older_than_store"
             flags.append(
                 f"Local version {local_version} is older than the Web Store's "
                 f"{store_version} (outdated copy)"
             )
-    return flags, score, build_match
+    return flags, score, build_match, relation
 
 
 def _query_cws(ext_id: str, timeout: int = 5) -> dict:

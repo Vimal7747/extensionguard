@@ -5,6 +5,24 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+
+- **Verdicts need evidence** (`extguard/verdict.py`). Permissions alone no
+  longer make a verdict HIGH or CRITICAL: without evidence of malicious
+  behaviour it is capped at MEDIUM for a verified Web Store build (signed,
+  byte-identical) and HIGH otherwise. Evidence - exfil endpoints, real
+  obfuscation, remote code, a hijacked-update diff, 3+ VirusTotal engines,
+  a tampered or forged build, an attacker-style update feed - lifts the cap.
+  The cap also applies to Claude's score. On 7 genuine popular extensions
+  this turned 5 CRITICAL and 1 HIGH into MEDIUM; packages that exfiltrate or
+  hide code stay CRITICAL. The bare TeamPCP demo manifest is now HIGH.
+- `--json`: new `verdict` block (`evidence`, `anomalies`,
+  `verified_store_build`, `max_level`, `reason`, `uncapped_score`);
+  `final_score` / `risk_level` are the capped values. The publisher check
+  adds `store_relation` and `identity_conflict`.
+- `--accept-baseline` also accepts a reviewed HIGH verdict, but never one with
+  evidence of malicious behaviour (previously: never HIGH).
+
 ### Added
 
 - CI now covers what used to be checked by hand, or not at all:
