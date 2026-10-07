@@ -55,6 +55,7 @@
 
 import argparse
 import asyncio
+import base64
 import itertools
 import json
 import re
@@ -65,6 +66,8 @@ import time
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timezone
 from urllib.parse import urlparse
+
+from extguard.permission_scorer import _TWO_PART_SUFFIXES
 
 try:
     import requests
@@ -98,8 +101,16 @@ HIGH_VALUE_DOMAINS = re.compile(
     re.IGNORECASE,
 )
 
-# RULE-04: base64 blob that looks like staged exfil data
+# RULE-06: base64 blob inside generated / logged code
 BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{100,}={0,2}")
+
+# RULE-04: a base64 blob big enough to be staged data. Small encoded values
+# are everywhere in normal storage - cached image data, encrypted password-
+# vault entries, settings - so the bar is ~768 decoded bytes, `data:` URLs
+# and JWTs are ignored, and a blob on its own is only MEDIUM. (Dark Reader's
+# 700-byte image cache was flagged HIGH under the old 100-character rule.)
+STAGED_BLOB = re.compile(r"[A-Za-z0-9+/]{1024,}={0,2}")
+_DATA_URL = re.compile(r"data:[\w/+.-]+;base64,[A-Za-z0-9+/=]+")
 
 # RULE-06: obfuscated eval chains
 OBFUSCATED_EVAL = re.compile(
@@ -165,13 +176,21 @@ def _make_alert(rule: str, severity: str, extension_target: dict, detail: dict) 
     extension.id is the 32-letter EXTENSION ID (what dedup, PagerDuty keys and
     remediation need) - the CDP target id is kept separately as target_id.
     """
+    name = extension_target.get("_name")
+    in_page = extension_target.get("_context") == "content_script"
     return {
         "alert_time": _now_iso(),
         "rule": rule,
         "severity": severity,  # "critical" / "high" / "medium"
         "extension": {
             "id": extension_target.get("_ext_id") or extension_target.get("id"),
-            "title": extension_target.get("title"),
+            # What analysts read: the extension's name. Without it, a content-
+            # script alert used to carry the WEB PAGE's title, and a worker
+            # alert "Service Worker chrome-extension://...". The name comes from
+            # the extension itself - a label, never an identity (that's `id`).
+            "name": name,
+            "title": name or (None if in_page else extension_target.get("title")),
+            "target_title": extension_target.get("title"),
             "url": extension_target.get("url"),
             "type": extension_target.get("type"),
             "target_id": extension_target.get("id"),
@@ -208,16 +227,93 @@ def _host_in(host: str, domains) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
-def find_credentials(text: str, destination_host: str) -> list:
+def _site(host: str) -> str:
+    """The registrable domain of a host: auth.grammarly.com -> grammarly.com."""
+    labels = host.lower().strip(".").split(".")
+    if len(labels) >= 3 and ".".join(labels[-2:]) in _TWO_PART_SUFFIXES:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def _jwt_claim_hosts(token: str) -> set:
+    """
+    Hosts named by a JWT's `iss` (issuer) and `aud` (audience) claims - where
+    the token comes from and who it is meant for. Empty if the payload can't
+    be decoded or names no host. The signature is NOT checked: this is only
+    used to recognise a token going home, never to trust it.
+    """
+    try:
+        payload = token.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (IndexError, ValueError):
+        return set()
+    if not isinstance(claims, dict):
+        return set()
+    values = []
+    for key in ("iss", "aud"):
+        value = claims.get(key)
+        values += value if isinstance(value, list) else [value]
+    hosts = set()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        host = _host_of(value) if "://" in value else value.split("/")[0]
+        if "." in host and re.fullmatch(r"[A-Za-z0-9.-]+", host):
+            hosts.add(host.lower())
+    return hosts
+
+
+def _jwt_goes_home(token: str, destination_host: str, auth_header: bool) -> bool:
+    """
+    Is sending this JWT to destination_host normal? Yes when the host is on
+    the same site as the token's issuer or audience (Grammarly's token to
+    gateway.grammarly.com). A token naming no host at all is normal as an
+    Authorization header - that is how every web API authenticates - but not
+    pasted into a request body or URL.
+    """
+    hosts = _jwt_claim_hosts(token)
+    if hosts:
+        return bool(destination_host) and _site(destination_host) in {_site(h) for h in hosts}
+    return auth_header
+
+
+def find_credentials(text: str, destination_host: str, auth_header: bool = False) -> list:
     """
     Names of credential types in `text` that do NOT belong to
     `destination_host` (sending a GitHub token to github.com is normal).
+    auth_header: the text is the request's Authorization header.
     """
     found = []
     if not text:
         return found
     for name, (regex, home_domains) in CREDENTIAL_PATTERNS.items():
+        if name == "JWT":
+            tokens = regex.findall(text)
+            if any(not _jwt_goes_home(t, destination_host, auth_header) for t in tokens):
+                found.append(name)
+            continue
         if regex.search(text) and not (home_domains and _host_in(destination_host, home_domains)):
+            found.append(name)
+    return found
+
+
+def staged_credentials(text: str) -> list:
+    """
+    Credential types worth flagging when an extension STORES them (RULE-04):
+    other services' tokens, session cookies, cookie dumps. An extension
+    keeping its own login token (a JWT) is normal - unless the token was
+    issued by a high-value identity provider (Google, Microsoft, GitHub...).
+    """
+    found = []
+    if not text:
+        return found
+    for name, (regex, _home_domains) in CREDENTIAL_PATTERNS.items():
+        if name == "JWT":
+            issuers = set().union(*(_jwt_claim_hosts(t) for t in regex.findall(text)))
+            if any(HIGH_VALUE_DOMAINS.search(h) for h in issuers):
+                found.append("JWT from a high-value identity provider")
+            continue
+        if regex.search(text):
             found.append(name)
     return found
 
@@ -341,7 +437,9 @@ async def _handle_network_request(
     body = request.get("postData") or ""
     auth = headers.get("Authorization") or headers.get("authorization") or ""
     carried = find_credentials(body, host) + find_credentials(url, host)
-    carried += [f"{c} (Authorization header)" for c in find_credentials(auth, host)]
+    carried += [
+        f"{c} (Authorization header)" for c in find_credentials(auth, host, auth_header=True)
+    ]
     if carried:
         severity = "critical" if C2_HOST_PATTERNS.search(host) else "high"
         await alert_queue.put(
@@ -470,11 +568,13 @@ async def _handle_hook_event(event: dict, target: dict, ext_id: str, alert_queue
     if kind in ("storage.set", "localStorage.setItem"):
         sample = str(data.get("sample", ""))
         size = int(data.get("size", 0) or 0)
-        creds = find_credentials(sample, "")
+        creds = staged_credentials(sample)
         reasons = []
         if creds:
             reasons.append("credential material: " + ", ".join(creds))
-        if BASE64_BLOB.search(sample):
+        # Embedded images and JWTs are base64 too - judge what is left
+        residue = CREDENTIAL_PATTERNS["JWT"][0].sub("", _DATA_URL.sub("", sample))
+        if STAGED_BLOB.search(residue):
             reasons.append("large base64 blob")
         if size >= 50_000:
             reasons.append(f"{size:,} bytes in one write")
@@ -482,7 +582,7 @@ async def _handle_hook_event(event: dict, target: dict, ext_id: str, alert_queue
             await alert_queue.put(
                 _make_alert(
                     "RULE-04",
-                    "critical" if creds else "high",
+                    "critical" if creds else "medium",
                     target,
                     {
                         "description": "Data staged in extension storage - " + "; ".join(reasons),
@@ -704,12 +804,44 @@ HOOK_SCRIPT = r"""
 """
 
 
-def build_hook_script(binding: str, token: str, mark: str) -> str:
-    return (
+def build_hook_script(binding: str, token: str, mark: str, own_url: str = "") -> str:
+    script = (
         HOOK_SCRIPT.replace("__BINDING__", binding)
         .replace("__TOKEN__", token)
         .replace("__MARK__", mark)
     )
+    return _tag_own_script(script, own_url)
+
+
+def _tag_own_script(script: str, own_url: str) -> str:
+    """
+    Name a script the monitor injects with a per-session secret sourceURL, so
+    RULE-06 can tell it apart from the extension's own eval() code. The tag
+    sits after the code, outside any function, so the extension cannot read
+    it (Function.prototype.toString only shows a function's own source). The
+    old filter used MARK - a property on globalThis that any extension can
+    list and paste into its eval()'d code to hide it from RULE-06.
+    """
+    return f"{script}\n//# sourceURL={own_url}\n" if own_url else script
+
+
+# Evaluated once in each extension's worker / page: its display name, with a
+# localised "__MSG_extName__" placeholder resolved (Bitwarden, uBlock Origin
+# Lite and Google Translate all use one).
+EXTENSION_NAME_SCRIPT = r"""
+(() => {
+  try {
+    let name = chrome.runtime.getManifest().name || "";
+    const key = /^__MSG_(.+)__$/.exec(name);
+    if (key && chrome.i18n && chrome.i18n.getMessage) {
+      name = chrome.i18n.getMessage(key[1]) || name;
+    }
+    return String(name);
+  } catch (e) {
+    return "";
+  }
+})()
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -769,6 +901,7 @@ class ExtensionMonitor:
         self.sessions: dict = {}  # sessionId -> session info dict
         self._requests: OrderedDict = OrderedDict()  # (session, requestId) -> (params, target, ext)
         self._extra: OrderedDict = OrderedDict()  # (session, requestId) -> ExtraInfo params
+        self.ext_names: dict = {}  # extension id -> display name (for alerts)
         self.stats = defaultdict(int)
 
     # ----- plumbing --------------------------------------------------------
@@ -929,6 +1062,7 @@ class ExtensionMonitor:
             "binding": "__eg_" + secrets.token_hex(6),
             "token": secrets.token_hex(16),
             "mark": "__egm_" + secrets.token_hex(6),
+            "own_url": "eg-own-" + secrets.token_hex(12),  # names our injected scripts
             "contexts": {},  # executionContextId -> extension id (pages: isolated worlds)
             "ready": asyncio.Event(),  # set once domains + hooks are in place
             "target": {
@@ -941,6 +1075,8 @@ class ExtensionMonitor:
             },
         }
         self.sessions[session] = entry
+        if ext_id in self.ext_names:
+            entry["target"]["_name"] = self.ext_names[ext_id]
         self.stats[f"attached_{role}"] += 1
         if not self.output_json and role == "extension":
             print(f"  [Monitor] Watching {kind} of extension {ext_id} ({info.get('title')})")
@@ -951,7 +1087,7 @@ class ExtensionMonitor:
         # The target processes commands in order, so everything queued here is
         # in effect before the resume at the end.
         is_document = kind in ("page", "iframe", "background_page")
-        hook = build_hook_script(entry["binding"], entry["token"], entry["mark"])
+        hook = build_hook_script(entry["binding"], entry["token"], entry["mark"], entry["own_url"])
         auto = {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True}
         await self._fire("Target.setAutoAttach", auto, session)  # its dedicated workers too
         await self._fire("Runtime.addBinding", {"name": entry["binding"]}, session)
@@ -984,6 +1120,29 @@ class ExtensionMonitor:
             # Already-running contexts (and documents, as a backstop).
             # Installing twice is harmless - the hook checks its marker.
             await self._install_hooks(entry, context_id=None)
+        if role == "extension" and ext_id not in self.ext_names:
+            asyncio.create_task(self._resolve_name(entry))
+
+    async def _resolve_name(self, entry: dict):
+        """Ask an extension context for its manifest name, for readable alerts."""
+        result = await self.send_quiet(
+            "Runtime.evaluate",
+            {
+                "expression": _tag_own_script(EXTENSION_NAME_SCRIPT, entry["own_url"]),
+                "returnByValue": True,
+                "silent": True,
+            },
+            session=entry["session"],
+            timeout=10,
+        )
+        value = ((result or {}).get("result") or {}).get("value")
+        name = re.sub(r"[\x00-\x1f\x7f]", "", value).strip()[:120] if isinstance(value, str) else ""
+        if not name:
+            return
+        self.ext_names[entry["ext_id"]] = name
+        for other in self.sessions.values():
+            if other.get("ext_id") == entry["ext_id"]:
+                other["target"]["_name"] = name
 
     async def _fire(self, method: str, params: dict | None, session: str | None):
         """
@@ -1023,7 +1182,9 @@ class ExtensionMonitor:
 
     async def _install_hooks(self, entry: dict, context_id: int | None, timeout: float = 15):
         params = {
-            "expression": build_hook_script(entry["binding"], entry["token"], entry["mark"]),
+            "expression": build_hook_script(
+                entry["binding"], entry["token"], entry["mark"], entry["own_url"]
+            ),
             "silent": True,
         }
         if context_id is not None:
@@ -1114,7 +1275,9 @@ class ExtensionMonitor:
                 "Debugger.getScriptSource", {"scriptId": params.get("scriptId")}, entry["session"]
             )
             source = (src or {}).get("scriptSource", "")
-            if source and entry["mark"] not in source:  # ignore our own hook script
+            # Skip the monitor's own injected scripts, recognised by the secret
+            # sourceURL tag (never by MARK, which the extension can read)
+            if source and entry["own_url"] not in source:
                 await _handle_dynamic_script(source, target, self.alert_queue)
         elif method == "Runtime.consoleAPICalled":
             await _handle_console_call(params, target, entry["ext_id"], self.alert_queue)
@@ -1134,7 +1297,12 @@ class ExtensionMonitor:
         if target.get("_ext_id") == ext_id:
             return target
         # A content-script action inside a web page: credit the extension
-        return {**target, "_ext_id": ext_id, "_context": "content_script"}
+        return {
+            **target,
+            "_ext_id": ext_id,
+            "_context": "content_script",
+            "_name": self.ext_names.get(ext_id),
+        }
 
     @staticmethod
     def _remember(store: OrderedDict, key, value):
@@ -1191,7 +1359,8 @@ async def _alert_printer(alert_queue: asyncio.Queue, output_json: bool):
             print(f"\n{colour}{bold}[ALERT] {rule} {severity}{reset}")
             print(f"  Time:      {alert['alert_time']}")
             print(
-                f"  Extension: {ext.get('title', '?')} ({ext.get('id')}) via {ext.get('context')}"
+                f"  Extension: {ext.get('name') or ext.get('title') or '?'} ({ext.get('id')}) "
+                f"via {ext.get('context')}"
             )
             print(f"  Detail:    {detail.get('description', '')}")
             if detail.get("url"):
@@ -1224,9 +1393,11 @@ async def run_monitor(
     delay = 2
     try:
         while True:
+            connected = False
             try:
                 ws_url = get_browser_ws_url()
                 async with websockets.connect(ws_url, max_size=None, ping_interval=20) as ws:
+                    connected = True
                     delay = 2
                     if not output_json:
                         print(
@@ -1238,16 +1409,33 @@ async def run_monitor(
                     )
                     await monitor.run()
             except (RuntimeError, OSError, websockets.exceptions.WebSocketException) as exc:
-                if once:
-                    raise RuntimeError(str(exc)) from exc
-                if not output_json:
-                    print(f"[Monitor] Chrome not reachable ({exc}); retrying in {delay}s")
+                # Diagnostics go to stderr: with --output-json, stdout is the
+                # alert stream that extguard-dispatch reads line by line.
+                if connected:
+                    # Chrome went away after a working session - closing the
+                    # browser often drops the socket without a close frame.
+                    # That is the normal end of a --once run, not an error.
+                    print(f"[Monitor] Chrome closed the connection ({exc})", file=sys.stderr)
+                elif once:
+                    raise RuntimeError(f"Chrome not reachable: {exc}") from exc
+                else:
+                    print(
+                        f"[Monitor] Chrome not reachable ({exc}); retrying in {delay}s",
+                        file=sys.stderr,
+                    )
             if once:
                 return
             await asyncio.sleep(delay)
             delay = min(delay * 2, 60)
     finally:
-        printer.cancel()
+        # Print alerts raised in the last moments before Chrome went away
+        # before stopping the printer - cancelling it straight away lost them
+        try:
+            await asyncio.wait_for(alert_queue.join(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            printer.cancel()
 
 
 # ---------------------------------------------------------------------------
@@ -1359,7 +1547,9 @@ def main():
     args = parser.parse_args()
 
     if not _DEPS_OK:
-        print("[ERROR] Missing dependencies. Run:  pip install requests websockets")
+        print(
+            "[ERROR] Missing dependencies. Run:  pip install requests websockets", file=sys.stderr
+        )
         sys.exit(1)
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(
@@ -1376,7 +1566,7 @@ def main():
         try:
             snap = asyncio.run(snapshot_storage(args.snapshot_storage))
         except RuntimeError as exc:
-            print(f"[ERROR] {exc}")
+            print(f"[ERROR] {exc}", file=sys.stderr)
             sys.exit(1)
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(snap, f, indent=2)
@@ -1388,7 +1578,7 @@ def main():
         try:
             targets = get_extension_targets()
         except RuntimeError as exc:
-            print(f"[ERROR] {exc}")
+            print(f"[ERROR] {exc}", file=sys.stderr)
             sys.exit(1)
 
         if not targets:
@@ -1419,7 +1609,7 @@ def main():
         if not args.output_json:
             print("\n[Monitor] Stopped by user.")
     except RuntimeError as exc:
-        print(f"[ERROR] {exc}")
+        print(f"[ERROR] {exc}", file=sys.stderr)
         sys.exit(1)
 
 

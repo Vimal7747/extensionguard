@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from extguard import paths
-from extguard.crx_parser import check_zip_limits, read_zip_member
+from extguard.crx_parser import MAX_MEMBER_BYTES, check_zip_limits, read_zip_member
 from extguard.update_velocity import history_key
 
 PROFILE_DIR = paths.data_dir() / "code_profiles"
@@ -115,10 +115,25 @@ _API_RE = {name: re.compile(rx) for name, (rx, _) in SENSITIVE_APIS.items()}
 
 _URL_RE = re.compile(r"""https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})(?::\d+)?(/[^\s'"`<>)\\]*)?""")
 
+# A URL inside a CSS attribute selector - [href^="https://bad.example/"] - is
+# something a content blocker HIDES, not a place the extension sends data.
+# uBlock Origin Lite ships thousands of these; counting them as endpoints
+# flagged it for "exfil to *.pages.dev" and made every filter-list update look
+# like new destinations.
+_SELECTOR_CONTEXT = re.compile(r"""\[\s*[\w:-]+\s*[\^$*|~]?=\s*(?:\\*["'])?$""")
+
 # Obfuscation fingerprints
 _OBF_HEX_IDENT = re.compile(r"\b_0x[0-9a-f]{4,6}\b")  # javascript-obfuscator
 _OBF_HEX_ESCAPE = re.compile(r"(?:\\x[0-9a-fA-F]{2}){8,}")
 _OBF_LONG_B64 = re.compile(r"['\"`][A-Za-z0-9+/]{400,}={0,2}['\"`]")
+# A long base64 string on its own is NOT obfuscation - bundles embed protobuf
+# descriptors, fonts and images that way (Grammarly, Bitwarden). It only
+# counts when the file also decodes-and-runs: eval(atob(..)), Function(atob(..))
+# or the classic eval(function(p,a,c,k,e,..)) packer.
+_OBF_DECODE_AND_RUN = re.compile(
+    r"\b(?:eval|Function)\s*\(\s*(?:atob|unescape|decodeURIComponent)\s*\("
+    r"|\beval\s*\(\s*function\s*\(\s*p\s*,\s*a\s*,\s*c\s*,\s*k\s*,\s*e\s*,"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -219,14 +234,20 @@ def build_profile(zip_bytes: bytes, version: str, file_sha256: str | None = None
                 if info.is_dir():
                     continue
                 name = info.filename
+                is_code = name.lower().endswith(CODE_SUFFIXES)
+                # Every file is hashed (to see what changed between versions);
+                # only code is scanned. Non-code files - source maps, images,
+                # fonts - only need the archive's normal per-file limit:
+                # Bitwarden's 12 MB .map files are not "unscanned code".
+                limit = MAX_FILE_BYTES + 1 if is_code else MAX_MEMBER_BYTES
                 try:
-                    data = read_zip_member(zf, info, MAX_FILE_BYTES + 1)
+                    data = read_zip_member(zf, info, limit)
                 except (ValueError, zipfile.BadZipFile, RuntimeError, NotImplementedError) as exc:
                     errors.append(f"{name}: {exc}")
                     continue
                 files[name] = hashlib.sha256(data).hexdigest()
 
-                if not name.lower().endswith(CODE_SUFFIXES):
+                if not is_code:
                     continue
                 if len(data) > MAX_FILE_BYTES:
                     errors.append(f"{name} too large to scan ({len(data):,} bytes)")
@@ -289,6 +310,8 @@ def _scan_text(name, text, hosts, exfil, apis, obfuscated):
         path = match.group(2) or ""
         if host in IGNORED_HOSTS:
             continue
+        if _SELECTOR_CONTEXT.search(text[max(0, match.start() - 24) : match.start()]):
+            continue  # a CSS selector naming a link to hide, not a destination
         hosts.add(host)
         if _is_exfil(host, path):
             exfil.add(host + (path[:60] if "webhook" in path or "bot" in path else ""))
@@ -301,7 +324,7 @@ def _scan_text(name, text, hosts, exfil, apis, obfuscated):
     if (
         len(_OBF_HEX_IDENT.findall(text)) >= 25
         or len(_OBF_HEX_ESCAPE.findall(text)) >= 10
-        or _OBF_LONG_B64.search(text)
+        or (_OBF_LONG_B64.search(text) and _OBF_DECODE_AND_RUN.search(text))
     ):
         obfuscated.append(name)
 

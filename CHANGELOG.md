@@ -38,9 +38,51 @@ versioning follows [SemVer](https://semver.org/).
 - README: install from PyPI, badges, and absolute links so the PyPI project
   page doesn't show broken links. `pyproject.toml` adds Changelog and
   Releases URLs (shown on PyPI from the next release).
+- RULE-04: a large base64 blob on its own is now MEDIUM (was HIGH) and must be
+  at least ~768 decoded bytes (was 75); `data:` URLs and JWTs don't count.
+  Other services' credentials and cookie dumps stay CRITICAL. The Sigma rule
+  for RULE-04 is now level medium.
+- Monitor alerts carry the extension's name (`extension.name`, also used as
+  `extension.title`); the CDP target's title moves to `extension.target_title`.
+
+### Fixed
+
+False positives found by scanning and running 7 genuine Web Store extensions
+(uBlock Origin Lite, Bitwarden, Grammarly, Dark Reader, React Developer
+Tools, JSON Formatter, Google Translate):
+
+- Stage 1f counted URLs inside CSS attribute selectors as endpoints. uBlock
+  Origin Lite's cosmetic filters (`[href^="https://….pages.dev/"]`, links it
+  HIDES) were reported as "sends data to an exfil-style destination", and
+  every filter-list update would have looked like a hijacked release.
+- A long base64 string was enough to call a file "heavily obfuscated" -
+  Grammarly and Bitwarden embed protobuf descriptors that way. It now also
+  needs code that decodes and runs it (`eval(atob(…))`, `new Function(…)`,
+  the `p,a,c,k,e` packer).
+- Source maps and other non-code files over 10 MB (Bitwarden's 12 MB `.map`)
+  were reported as "code scan incomplete".
+- The "external CDN JS reference" check flagged images, checksum files and
+  config data on CDN hosts; it now only counts scripts and npm packages.
+- RULE-02 flagged an extension's own login JWT going to its own API
+  (Grammarly → `*.grammarly.com`) as "credential sent to a third-party
+  host". A JWT whose `iss` / `aud` names the destination's site, or a JWT
+  without them sent as the Authorization header, is now normal.
+- RULE-04 flagged an extension storing its own login token (CRITICAL) and
+  Dark Reader's image cache in `localStorage` (HIGH). Stored JWTs only count
+  when issued by a high-value identity provider (Google, Microsoft, GitHub…).
+- `extguard-monitor --output-json --once` printed
+  `[ERROR] no close frame received or sent` into the JSON alert stream and
+  exited 1 when the browser closed normally; alerts queued in the last
+  moments were dropped. Diagnostics now go to stderr, a browser shutdown
+  after a working session ends cleanly, and queued alerts are printed first.
 
 ### Security
 
+- RULE-06 skipped any runtime-compiled script containing the monitor's hook
+  marker - a property on `globalThis` that any extension can list
+  (`Object.getOwnPropertyNames`) and paste into its own `eval()`'d code to
+  hide it. The monitor now recognises its own injected scripts by a
+  per-session secret `sourceURL` tag the extension cannot read.
 - A re-pointed or compromised action tag (as in the 2025 `tj-actions`
   incident) can no longer change what runs in CI or the release workflow,
   which holds the PyPI publishing identity.

