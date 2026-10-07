@@ -26,7 +26,7 @@ services:
   # ----------------------------------------------------------------------
   dashboard:
     build: .
-    image: extensionguard:0.3.0
+    image: extensionguard:0.4.0
     container_name: extguard-dashboard
     restart: unless-stopped
     ports:
@@ -58,7 +58,7 @@ services:
   # paging destinations.
   # ----------------------------------------------------------------------
   dispatcher:
-    image: extensionguard:0.3.0
+    image: extensionguard:0.4.0
     container_name: extguard-dispatcher
     restart: unless-stopped
     depends_on:
@@ -85,7 +85,7 @@ services:
   # runs `extguard-ttp-sync --activate` (see the top of this file).
   # ----------------------------------------------------------------------
   ttp-sync:
-    image: extensionguard:0.3.0
+    image: extensionguard:0.4.0
     container_name: extguard-ttp-sync
     restart: unless-stopped
     volumes:
@@ -109,7 +109,7 @@ services:
   # it through a TLS reverse proxy or tunnel pointing at 127.0.0.1:8765.
   # ----------------------------------------------------------------------
   webhook:
-    image: extensionguard:0.3.0
+    image: extensionguard:0.4.0
     container_name: extguard-webhook
     restart: unless-stopped
     profiles: ["webhook"]
