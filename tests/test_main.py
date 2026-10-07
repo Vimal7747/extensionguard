@@ -51,7 +51,11 @@ class TestJsonAlwaysEmitted:
         code, report = _run_json(capsys, [_write(tmp_path, CRITICAL_MANIFEST)])
         assert code == 0
         assert report["ai_triage"] == {"status": "skipped", "reason": "ANTHROPIC_API_KEY not set"}
-        assert report["risk_level"] == "critical"
+        # A bare manifest can't be verified as a store build and shows no
+        # evidence of malice: dangerous permissions alone cap at HIGH
+        assert report["risk_level"] == "high"
+        assert report["verdict"]["max_level"] == "high"
+        assert "could not be verified" in report["verdict"]["reason"]
         assert report["iocs"]  # Stage 1 flags feed remediation when AI is absent
 
     def test_parse_error_is_json_with_exit_3(self, tmp_path, capsys):
@@ -127,16 +131,35 @@ class TestVerdict:
         with patch("extguard.main.triage_extension", return_value=_triage_result(0)):
             _, report = _run_json(capsys, [_write(tmp_path, CRITICAL_MANIFEST)])
         assert report["ai_risk_score"] == 0
-        assert report["final_score"] == report["composite_score"]
-        assert report["risk_level"] == "critical"
+        assert report["verdict"]["uncapped_score"] == report["composite_score"]
+        assert report["risk_level"] == "high"  # the Stage 1 verdict, capped - not lowered
 
-    def test_claude_can_raise_the_verdict(self, tmp_path, capsys, monkeypatch):
+    def test_claude_raises_the_verdict_up_to_the_evidence_cap(self, tmp_path, capsys, monkeypatch):
+        """Claude sees no code: on its own it can't push past the evidence cap."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-real")
         path = _write(tmp_path, {"name": "ok", "version": "1.0", "permissions": ["storage"]})
         with patch("extguard.main.triage_extension", return_value=_triage_result(95)):
             _, report = _run_json(capsys, [path])
-        assert report["final_score"] == 95
-        assert report["risk_level"] == "critical"
+        assert report["ai_risk_score"] == 95
+        assert report["verdict"]["uncapped_score"] == 95
+        assert report["risk_level"] == "high"
+
+    def test_claude_can_raise_to_critical_with_evidence(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-real")
+        vt_hit = {
+            "osv_score": 20,
+            "flags": [],
+            "vt": {"queried": True, "found": True, "malicious": 5, "total": 70},
+        }
+        path = _write(tmp_path, {"name": "ok", "version": "1.0", "permissions": ["storage"]})
+        with (
+            patch("extguard.main.run_osv_checks", return_value=vt_hit),
+            patch("extguard.main.triage_extension", return_value=_triage_result(95)) as ai,
+        ):
+            _, report = _run_json(capsys, [path])
+        assert report["final_score"] == 95 and report["risk_level"] == "critical"
+        # Claude is told what evidence there is
+        assert ai.call_args.args[3]["evidence_assessment"]["evidence"]
 
     def test_claude_failure_falls_back_to_stage1(self, tmp_path, capsys, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-not-real")
@@ -144,7 +167,7 @@ class TestVerdict:
             code, report = _run_json(capsys, [_write(tmp_path, CRITICAL_MANIFEST)])
         assert code == 0
         assert report["ai_triage"]["status"] == "failed"
-        assert report["risk_level"] == "critical"
+        assert report["risk_level"] == "high"
 
     def test_virustotal_confirmed_floor(self, tmp_path, capsys):
         vt_hit = {

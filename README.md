@@ -51,7 +51,7 @@ What's in the box:
 | Property | Value |
 | --- | --- |
 | Version | **0.3.0** |
-| Tests | **897** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
+| Tests | **928** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md)) |
 | Lint | **0 findings** (`ruff check`) |
 | Python | 3.10 – 3.13 |
@@ -128,17 +128,35 @@ extguard-sigma --output sigma/
 
 ### Verdicts, exit codes and automation
 
-- **Final score** = the higher of the Stage 1 composite score and Claude's
-  score. A file that 11+ VirusTotal engines flag is raised to at least 90.
-  An update that starts sending data to exfil-style hosting (Discord /
-  Telegram webhooks, `*.workers.dev`, tunnels) that the previous accepted
-  build never used is raised to at least 60 (HIGH).
+- **Score** = the higher of the Stage 1 score and Claude's score. A file that
+  11+ VirusTotal engines flag is raised to at least 90. An update that starts
+  sending data to exfil-style hosting (Discord / Telegram webhooks,
+  `*.workers.dev`, tunnels) that the previous accepted build never used is
+  raised to at least 60 (HIGH).
+- **Verdicts need evidence.** Permissions show what an extension *could* do -
+  and password managers, ad blockers and developer tools need the same ones
+  malware wants. So the score alone can't make a verdict HIGH or CRITICAL
+  (`verdict` in the JSON report explains each one):
+
+  | What the scan found | Highest verdict |
+  | --- | --- |
+  | **Evidence of malicious behaviour**: exfil endpoints, real obfuscation, remote code, a hijacked-update diff, 3+ VirusTotal engines, a tampered or forged build, an attacker-style update feed | CRITICAL |
+  | **An anomaly**: not on the Web Store, updates from outside it, an odd version change, 1-2 VirusTotal engines, an update adding endpoints *and* sensitive APIs, a check that failed | HIGH |
+  | Nothing suspicious, but **not verifiable** as the genuine store build (bare manifest, ZIP, offline, older copy) | HIGH |
+  | Nothing suspicious in a **verified Web Store build** (signed, byte-identical) | MEDIUM |
+
+  The uncapped score stays in the report. On seven genuine popular
+  extensions (Bitwarden, Grammarly, uBlock Origin Lite...) this turned five
+  false CRITICALs into MEDIUM "review / allowlist" - while packages that
+  exfiltrate or hide code stay CRITICAL. A malicious extension whose code
+  looks clean is MEDIUM at first scan; the runtime monitor and the update
+  diff are what catch it when it acts.
 - **Baselines.** Each LOW / MEDIUM scan is saved as the reference for
   comparing the next version: its version for velocity, its code profile for
-  the code diff. HIGH / CRITICAL builds never become the baseline. Nor does a
-  build whose code changed (new endpoints, sensitive APIs, obfuscation) until
-  you review it and re-scan with `--accept-baseline`. `--no-record` saves
-  nothing.
+  the code diff. A build whose code changed (new endpoints, sensitive APIs,
+  obfuscation) is only saved after you review it and re-scan with
+  `--accept-baseline` - which also works for a HIGH verdict, but never when
+  there is evidence of malicious behaviour. `--no-record` saves nothing.
 - `--json` always prints one JSON document, including when the AI stage is
   skipped or fails (`ai_triage.status`) and when the scan can't complete
   (`{"error": ..., "stage": ...}`).
@@ -174,16 +192,20 @@ fails if an artifact or the chain of custody was edited, or the signature is
 missing. Anyone who can read the key can still forge a signature, so keep it
 away from the analyst workstation account where you can.
 
-Expected output for the malicious test fixture:
+Expected output for the TeamPCP test fixture - a bare manifest, so it has the
+attack's permissions but no code to judge and no signature to verify:
 
 ```
-Stage 1 composite: 100/100 - CRITICAL
-  Flagged: webRequestBlocking, cookies, webRequest, tabs, history, storage, <all_urls>
-  [!] Session token harvesting combo - matches TeamPCP TTP (T1555.003)
-  [!] Traffic intercept + cookie theft pipeline (T1071 + T1555)
-  [!] Persistent background page - always-on monitoring
-  Recommendation: BLOCK IMMEDIATELY - initiate remediation playbook
+Stage 1 score (capability + findings): 100/100
+
+  Verdict capped at HIGH (score 100 -> 69): No evidence of malicious behaviour,
+  but this could not be verified as the genuine Web Store build (no Web Store
+  signature - a bare manifest, unpacked ZIP or sideloaded package)
+  Recommendation (69/100):  QUARANTINE - escalate to Tier-2 analyst
 ```
+
+The same permissions in a package whose code posts cookies to
+`*.workers.dev` are CRITICAL ("code sends data to exfil-style hosting").
 
 ### Running the runtime monitor
 
@@ -496,6 +518,7 @@ extguard/                         (repository root)
     virustotal_lookup.py          - VirusTotal v3 multi-engine consensus
     update_velocity.py            - Semver jump / rollback detection
     code_diff.py                  - Stage 1f code profile + diff vs baseline
+    verdict.py                    - Evidence-based verdict caps
     claude_triage.py              - Claude API integration (cache + tool_use)
     ttp_loader.py                 - Disk-backed TTP library with mtime cache
     config_schema.py              - extguard.conf.json validator
@@ -507,7 +530,7 @@ extguard/                         (repository root)
     dashboard_templates/          - Jinja2 templates for the Flask UI
     dashboard_static/             - CSS for the Flask UI
 
-  tests/                          - 897 pytest tests
+  tests/                          - 928 pytest tests
     benchmarks/                   - 13 pytest-benchmark performance baselines
     fixtures/recorded/            - Real API responses the tests replay
     test_live_apis.py             - Opt-in contract tests against real APIs

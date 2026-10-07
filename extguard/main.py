@@ -35,7 +35,7 @@ import json
 import os
 import sys
 
-from extguard import paths
+from extguard import paths, verdict
 from extguard.claude_triage import triage_extension
 from extguard.code_diff import analyse_code, record_profile
 from extguard.crx_parser import parse_extension
@@ -141,8 +141,8 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--accept-baseline",
         action="store_true",
-        help="You reviewed this build's code changes (new endpoints / APIs): save it as "
-        "the baseline anyway. Never applies to a HIGH or CRITICAL verdict.",
+        help="You reviewed this build: save it as the baseline anyway (also for a HIGH "
+        "verdict). Never applies when there is evidence of malicious behaviour.",
     )
     args = parser.parse_args(argv)
     return run_scan(args)
@@ -303,11 +303,18 @@ def run_scan(args) -> int:
     if not json_mode:
         level = _score_to_level(composite_score)
         colour = RISK_COLOURS.get(level, RESET)
-        print(f"\n{BOLD}Stage 1 composite: {colour}{composite_score}/100 - {level.upper()}{RESET}")
+        # No level here: the verdict (below) also weighs the evidence
+        print(
+            f"\n{BOLD}Stage 1 score (capability + findings): {colour}{composite_score}/100{RESET}"
+        )
         if floor_reason:
             print(f"  {RED}{BOLD}[!] Score floor applied: {floor_reason}{RESET}")
         for stage, error in stage_errors.items():
             print(f"  {RED}[!] Stage {stage} failed ({error}) - its result is UNKNOWN{RESET}")
+
+    # What do we actually KNOW? Evidence lifts the cap; without it the verdict
+    # is capped (MEDIUM for a verified store build, HIGH otherwise) - see verdict.py
+    assessment = verdict.assess(pub_result, osv_result, velocity_result, code_result, stage_errors)
 
     # -----------------------------------------------------------------------
     # Stage 2: Claude AI triage
@@ -325,6 +332,7 @@ def run_scan(args) -> int:
         findings = _stage1_findings(
             composite_score, pub_result, osv_result, velocity_result, code_result, stage_errors
         )
+        findings["evidence_assessment"] = assessment
         try:
             ai = triage_extension(manifest, perm_score, args.extension_path, findings)
             ai_status = {"status": "ok"}
@@ -332,13 +340,16 @@ def run_scan(args) -> int:
             # The AI is an extra opinion, not a dependency: fall back to Stage 1
             ai_status = {"status": "failed", "reason": redact(f"{type(exc).__name__}: {exc}")}
 
-    final_score = max(composite_score, ai.risk_score) if ai else composite_score
+    uncapped_score = max(composite_score, ai.risk_score) if ai else composite_score
+    final_score = verdict.apply_cap(uncapped_score, assessment)
     final_level = _score_to_level(final_score)
 
     # -----------------------------------------------------------------------
     # Baselines: only an ACCEPTED build becomes the reference for next time
     # -----------------------------------------------------------------------
-    baseline = _record_baselines(args, final_level, stage_errors, manifest, pub_result, code_result)
+    baseline = _record_baselines(
+        args, final_level, stage_errors, manifest, pub_result, code_result, assessment
+    )
 
     # -----------------------------------------------------------------------
     # Output
@@ -361,6 +372,7 @@ def run_scan(args) -> int:
             final_level,
             stage_errors,
         )
+        report["verdict"] = {**assessment, "uncapped_score": uncapped_score}
         report["baseline"] = baseline
         print(json.dumps(report, indent=2))
     else:
@@ -371,6 +383,7 @@ def run_scan(args) -> int:
             if ai_status["reason"] == "ANTHROPIC_API_KEY not set":
                 print("  Set it with:  $env:ANTHROPIC_API_KEY = 'sk-ant-...'")
             print("  Verdict below is based on Stage 1 only.\n")
+            _print_verdict_basis(assessment, uncapped_score, final_score)
             _print_recommendation(final_level, final_score)
         else:
             _print_human_report(
@@ -381,6 +394,8 @@ def run_scan(args) -> int:
                 code_result,
                 composite_score,
                 final_score,
+                assessment,
+                uncapped_score,
             )
         print(f"  {CYAN}Baseline:{RESET} {baseline['reason']}")
 
@@ -564,19 +579,33 @@ def _code_summary(code: dict) -> dict:
     }
 
 
-def _record_baselines(args, final_level, stage_errors, manifest, pub, code) -> dict:
+def _record_baselines(
+    args, final_level, stage_errors, manifest, pub, code, assessment=None
+) -> dict:
     """
-    Save this build as the reference for future version / code comparisons -
-    but ONLY when the verdict is LOW or MEDIUM. Recording every scanned build
-    (the old behaviour) let one scan of a malicious sample become the
-    "known good" baseline that the next version was compared against.
+    Save this build as the reference for future version / code comparisons.
+    Automatically only for a LOW or MEDIUM verdict; a HIGH verdict only with
+    --accept-baseline (an analyst reviewed it) and only when there is no
+    evidence of malicious behaviour. Recording every scanned build (the old
+    behaviour) let one scan of a malicious sample become the "known good"
+    baseline that the next version was compared against.
     """
     if args.no_record:
         return {"recorded": False, "reason": "not recorded (--no-record)"}
-    if final_level not in ("low", "medium"):
+    has_evidence = bool((assessment or {}).get("evidence"))
+    accepted = getattr(args, "accept_baseline", False)
+    if final_level not in ("low", "medium") and not (
+        accepted and final_level == "high" and not has_evidence
+    ):
+        hint = (
+            ""
+            if has_evidence or final_level == "critical"
+            else " - review it, then re-scan with --accept-baseline"
+        )
         return {
             "recorded": False,
-            "reason": f"not recorded - a {final_level.upper()} verdict never becomes a baseline",
+            "reason": f"not recorded - a {final_level.upper()} verdict never becomes a "
+            f"baseline automatically{hint}",
         }
     if "1e" in stage_errors or "1f" in stage_errors:
         return {"recorded": False, "reason": "not recorded - a Stage 1e/1f check failed"}
@@ -704,7 +733,15 @@ def _print_stage_1f(code: dict):
 
 
 def _print_human_report(
-    ai, pub: dict, osv: dict, vel: dict, code: dict, composite: int, final_score: int
+    ai,
+    pub: dict,
+    osv: dict,
+    vel: dict,
+    code: dict,
+    composite: int,
+    final_score: int,
+    assessment: dict,
+    uncapped_score: int,
 ):
     final_level = _score_to_level(final_score)
     colour = RISK_COLOURS.get(final_level, RESET)
@@ -712,8 +749,9 @@ def _print_human_report(
     print()
     print("=" * 66)
     print(f"  {BOLD}FINAL RISK SCORE: {colour}{final_score}/100 - {final_level.upper()}{RESET}")
-    print(f"  (Stage 1 composite {composite}/100, Claude {ai.risk_score}/100 - the higher wins)")
+    print(f"  (Stage 1 {composite}/100, Claude {ai.risk_score}/100 - the higher counts)")
     print("=" * 66)
+    _print_verdict_basis(assessment, uncapped_score, final_score)
 
     if ai.mitre_techniques:
         print(f"\n  {BOLD}MITRE ATT&CK Techniques:{RESET}")
@@ -762,6 +800,17 @@ def _print_human_report(
         + (f" --ext-id {pub.get('extension_id')}" if pub.get("extension_id") else "")
     )
     print()
+
+
+def _print_verdict_basis(assessment: dict, uncapped_score: int, final_score: int):
+    """One line on what the verdict rests on - and whether it was capped."""
+    if final_score < uncapped_score:
+        print(
+            f"  {CYAN}Verdict capped at {assessment['max_level'].upper()} "
+            f"(score {uncapped_score} -> {final_score}):{RESET} {assessment['reason']}"
+        )
+    else:
+        print(f"  {CYAN}Verdict basis:{RESET} {assessment['reason']}")
 
 
 def _print_recommendation(risk_level: str, score: int):

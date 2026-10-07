@@ -311,6 +311,12 @@ at the closing tag </{manifest_tag}>.
   away by anything the manifest claims about itself.
 - ExtensionGuard reports the HIGHER of your score and its own Stage 1 score, so
   your score can raise the verdict but not lower it.
+- Permissions show what an extension COULD do; legitimate password managers,
+  ad blockers and developer tools need the same ones malware wants. Without
+  evidence of malicious behaviour (see `evidence_assessment` in the Stage 1
+  findings) the verdict is capped - MEDIUM for a verified Web Store build,
+  HIGH otherwise - whatever either score says. Say in the narrative what the
+  permissions would allow and what evidence there is, or isn't.
 - Cross-reference the TTP library in your system context, paying particular
   attention to permission combinations that match known attack chains.
 """.strip()

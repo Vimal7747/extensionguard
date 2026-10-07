@@ -448,6 +448,7 @@ obfuscation, remote code) still score on every scan.
 | R11 | Webhook delivery log is bounded (2,000 IDs) | Low | A replay of a delivery older than that re-runs a sync of the current repo state - staged, so still reviewed |
 | R12 | Workspace blocking not exercised against a live Google tenant | Medium (operational) | Request shape follows Google's documented `orgunits:batchModify` format and is unit-tested; verify with `--dry-run` and a test org unit first |
 | R13 | First scanned build becomes the baseline | Low | Absolute code findings still score every scan (T13) |
+| R14 | A malicious extension whose code looks clean, in a verified store build, is only MEDIUM at first scan | Medium | Deliberate trade-off: verdicts need evidence, or legitimate password managers and ad blockers read as CRITICAL and analysts stop trusting verdicts. The uncapped score is still reported; the runtime monitor (RULE-01..07) and the update code diff catch it when it acts or changes |
 
 ## Out of scope
 
