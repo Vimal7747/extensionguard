@@ -5,6 +5,17 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-07
+
+Verdicts that need evidence, and fixes from testing ExtensionGuard on seven
+genuine Chrome Web Store extensions (uBlock Origin Lite, Bitwarden,
+Grammarly, Dark Reader, React Developer Tools, JSON Formatter, Google
+Translate). In 0.3.0 five of them scored CRITICAL on permissions alone and
+the monitor raised six false alarms while they ran; now all seven are
+MEDIUM "review / allowlist" with zero runtime alerts, while packages that
+exfiltrate data or hide code are still CRITICAL. Also: automated releases to
+GitHub and PyPI, Windows / Docker / benchmark CI, and pinned GitHub Actions.
+
 ### Breaking
 
 - **Verdicts need evidence** (`extguard/verdict.py`). Permissions alone no
