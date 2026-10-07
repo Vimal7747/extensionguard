@@ -157,3 +157,46 @@ class TestCli:
         monkeypatch.chdir(_project(tmp_path, version="1.2.3"))
         assert release_check.main(["--print-version"]) == 0
         assert capsys.readouterr().out.strip() == "1.2.3"
+
+
+# ---------------------------------------------------------------------------
+# tools/junit_annotations.py (failure reasons readable without a sign-in)
+# ---------------------------------------------------------------------------
+
+JUNIT = """<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testsuite name="pytest" tests="3" failures="1" errors="1">
+  <testcase classname="tests.test_live_apis" name="test_ok" time="0.1"/>
+  <testcase classname="tests.test_live_apis" name="test_osv" time="0.2">
+    <failure message="AssertionError: assert 200 == 400">resp = ...
+E   assert 200 == 400
+E    +  where 200 = &lt;Response [200]&gt;.status_code</failure>
+  </testcase>
+  <testcase classname="tests.test_live_monitor" name="test_chrome" time="1">
+    <error message="failed on setup with &quot;RuntimeError: Chrome did not start&quot;">trace</error>
+  </testcase>
+</testsuite></testsuites>"""
+
+
+class TestJunitAnnotations:
+    def test_one_error_line_per_failed_test(self):
+        from tools.junit_annotations import annotations
+
+        lines = annotations(JUNIT)
+        assert len(lines) == 2
+        assert lines[0].startswith("::error title=FAILURE tests.test_live_apis.test_osv::")
+        assert "assert 200 == 400" in lines[0]
+        assert "%0A" in lines[0] and "\n" not in lines[0]  # one physical line
+        assert lines[1].startswith("::error title=ERROR tests.test_live_monitor.test_chrome::")
+
+    def test_long_tracebacks_keep_the_end(self):
+        from tools.junit_annotations import MAX_MESSAGE_CHARS, annotations
+
+        xml = JUNIT.replace("resp = ...", "x" * 10_000)
+        assert "assert 200 == 400" in annotations(xml)[0]
+        assert len(annotations(xml)[0]) < MAX_MESSAGE_CHARS + 500
+
+    def test_missing_report_is_a_warning_not_a_crash(self, tmp_path, capsys):
+        from tools.junit_annotations import main
+
+        assert main([str(tmp_path / "nope.xml")]) == 0
+        assert capsys.readouterr().out.startswith("::warning::")
