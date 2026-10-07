@@ -47,4 +47,10 @@ jobs:
           EXTGUARD_LIVE_TESTS: "1"
         # -rs prints the reason for any skipped test. tests/test_live_monitor.py
         # fails (instead of skipping) when Chrome is missing on CI.
-        run: pytest -m live -v -rs
+        run: pytest -m live -v -rs --junitxml=live-results.xml
+
+      - name: Report failures as annotations
+        # Job logs need a GitHub sign-in; annotations are public, so the
+        # failing test and its error show on the PR and in the check-run API
+        if: failure()
+        run: python tools/junit_annotations.py live-results.xml
