@@ -12,7 +12,7 @@ how anyone can repeat the test with one command.
 - **5 of 5 attack samples** are still rated HIGH or CRITICAL.
 - The monitor caught the test-only canary extension's fake token **both
   ways**: saved to storage the moment it started, and sent over the network
-  (8 requests out of 8). So "0 alerts" means the monitor was watching and saw
+  (7 requests out of 7). So "0 alerts" means the monitor was watching and saw
   nothing, not that it was asleep.
 
 The same test runs **every week** on GitHub against the then-current store
@@ -91,7 +91,7 @@ Everything is done by [`tools/real_extension_check.py`](https://github.com/Vimal
 
 ## Latest results
 
-Run on 2026-10-14 with ExtensionGuard 0.4.0, Python 3.13.6, Windows 11 and
+Run on 2026-10-14 with ExtensionGuard 0.4.1, Python 3.13.6, Windows 11 and
 Chrome for Testing 155.0.8059.39. **Result: PASS.**
 
 ### Genuine Web Store extensions (static scan)
@@ -132,7 +132,7 @@ behaviour. See [verdicts](https://github.com/Vimal7747/extensionguard/blob/main/
 | React Developer Tools | yes | 0 | PASS |
 | JSON Formatter | yes | 0 | PASS |
 | Google Translate | yes | 0 | PASS |
-| ExtensionGuard canary (fake token, must be caught) | yes | 8 RULE-02 (network), 1 RULE-04 (storage, at start-up) | PASS |
+| ExtensionGuard canary (fake token, must be caught) | yes | 7 RULE-02 (network), 1 RULE-04 (storage, at start-up) | PASS |
 
 ### Exact builds tested
 
