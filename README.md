@@ -52,7 +52,7 @@ What's in the box:
 | Property | Value |
 | --- | --- |
 | Version | **0.4.0** |
-| Tests | **963** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
+| Tests | **970** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md)) |
 | Real-world test | **7** genuine Web Store extensions + 5 attack samples, static and in a real browser, re-run weekly (see [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md)) |
 | Lint | **0 findings** (`ruff check`) |
@@ -535,7 +535,7 @@ extguard/                         (repository root)
     dashboard_templates/          - Jinja2 templates for the Flask UI
     dashboard_static/             - CSS for the Flask UI
 
-  tests/                          - 963 pytest tests
+  tests/                          - 970 pytest tests
     benchmarks/                   - 13 pytest-benchmark performance baselines
     fixtures/recorded/            - Real API responses the tests replay
     test_live_apis.py             - Opt-in contract tests against real APIs

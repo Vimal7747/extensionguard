@@ -781,6 +781,22 @@ class TestHookEvents:
         assert alerts[0]["severity"] == "critical"
 
     @pytest.mark.asyncio
+    async def test_big_write_alone_is_not_staging(self, fake_target, alert_queue):
+        """Real-extension check: uBlock Origin Lite copies ~1 MB of its own
+        cosmetic-filter CSS into chrome.storage on install. Size alone used to
+        raise RULE-04 - on every install and filter update."""
+        sample = json.dumps({"css.specific.easylist": ["##.ad-banner", "###sponsored"] * 500})
+        data = {"keys": ["css.specific.easylist"], "size": 565_188, "sample": sample[:4000]}
+        assert await _hook("storage.set", data, fake_target, alert_queue) == []
+
+    @pytest.mark.asyncio
+    async def test_big_write_with_credentials_reports_the_size_too(self, fake_target, alert_queue):
+        data = {"keys": ["loot"], "size": 120_000, "sample": COOKIE_DUMP}
+        alerts = await _hook("storage.set", data, fake_target, alert_queue)
+        assert alerts[0]["severity"] == "critical"
+        assert "120,000 bytes in one write" in alerts[0]["detail"]["description"]
+
+    @pytest.mark.asyncio
     async def test_ordinary_settings_write_ignored(self, fake_target, alert_queue):
         alerts = await _hook(
             "storage.set", {"size": 20, "sample": '{"theme":"dark"}'}, fake_target, alert_queue
@@ -975,6 +991,41 @@ class TestExtensionMonitor:
             "Debugger.setSkipAllPauses",
             "Debugger.resume",
         ]
+
+    @pytest.mark.asyncio
+    async def test_name_lookup_waits_until_the_new_worker_is_hooked(self):
+        """Real-Chrome regression (0.4.0): the name lookup, sent right after a
+        new worker was resumed, ran BEFORE the worker's own code and used up
+        the before-first-script pause - so the hooks went in after the
+        worker's start-up code (a storage write at start-up went unseen).
+        Found by the real-extension check's canary."""
+        mon, ws = _monitor()
+        await mon.dispatch(_attached("S1", "service_worker", f"chrome-extension://{EXT}/sw.js"))
+        await asyncio.sleep(0.05)  # let any scheduled task run
+
+        def evaluated():
+            return [
+                m["params"]["expression"]
+                for m in ws.sent
+                if m.get("sessionId") == "S1" and m["method"] == "Runtime.evaluate"
+            ]
+
+        assert evaluated() == []  # nothing runs in the worker before its hook pause
+        pause = {"method": "Debugger.paused", "sessionId": "S1"}
+        await mon.dispatch({**pause, "params": {"reason": "instrumentation"}})
+        await asyncio.sleep(0.05)
+        expressions = evaluated()
+        assert "getManifest" not in expressions[0]  # the hooks go in first...
+        assert any("getManifest" in e for e in expressions[1:])  # ...then the name
+        assert mon.ext_names[EXT] == "Test Extension"
+
+    @pytest.mark.asyncio
+    async def test_running_worker_name_is_looked_up_straight_away(self):
+        mon, ws = _monitor()
+        url = f"chrome-extension://{EXT}/sw.js"
+        await mon.dispatch(_attached("S1", "service_worker", url, waiting=False))
+        await asyncio.sleep(0.05)
+        assert mon.ext_names[EXT] == "Test Extension"
 
     @pytest.mark.asyncio
     async def test_duplicate_session_resumes_after_primary_then_detaches(self):

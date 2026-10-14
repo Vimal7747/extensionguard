@@ -10,9 +10,10 @@ how anyone can repeat the test with one command.
   no evidence of malice, and the runtime monitor raised **0 alerts** about
   them in a real browser.
 - **5 of 5 attack samples** are still rated HIGH or CRITICAL.
-- The monitor caught the test-only canary extension's fake token **8 times
-  out of 8**, so "0 alerts" means the monitor was watching and saw nothing,
-  not that it was asleep.
+- The monitor caught the test-only canary extension's fake token **both
+  ways**: saved to storage the moment it started, and sent over the network
+  (8 requests out of 8). So "0 alerts" means the monitor was watching and saw
+  nothing, not that it was asleep.
 
 The same test runs **every week** on GitHub against the then-current store
 versions ([`real-extensions.yml`](https://github.com/Vimal7747/extensionguard/actions/workflows/real-extensions.yml)).
@@ -64,22 +65,29 @@ Everything is done by [`tools/real_extension_check.py`](https://github.com/Vimal
 
    Each one must reach at least its expected level. Without this step, "no
    false positives" could also come from a detector that never fires.
-4. **Runtime (`--runtime`).** All seven extensions are loaded into
-   **Chrome for Testing**: headless, with a throwaway profile and nothing
-   from a real browser.
+4. **Runtime (`--runtime`).** **Chrome for Testing** starts empty:
+   headless, with a throwaway profile and nothing from a real browser.
+   - `extguard-monitor` attaches over the DevTools protocol first. **Then**
+     the seven extensions are installed into the running browser, so the
+     monitor sees each one's first-install activity on every machine, fast
+     or slow.
    - Each one is unpacked with its store signing key, so it keeps its real
      Web Store ID.
-   - `extguard-monitor` attaches over the DevTools protocol, and the browser
-     visits six ordinary sites for 15 seconds each: example.com, Wikipedia,
-     GitHub, BBC News, MDN and a GitHub API JSON page.
+   - The browser visits six ordinary sites for 15 seconds each:
+     example.com, Wikipedia, GitHub, BBC News, MDN and a GitHub API JSON
+     page.
    - Chrome's own `chrome://extensions` list confirms each extension is
      installed and enabled.
-   - A small **canary** extension (test-only, not on the store) posts a fake
-     GitHub token to a local server every time a tab loads. The monitor
-     **must** report it as RULE-02.
+   - A small **canary** extension (test-only, not on the store) misuses a
+     fake GitHub token in the two ways the monitor watches. On its very
+     first line it saves the token to `chrome.storage`; this RULE-04 alert
+     only fires if the monitor's hooks were in place before the extension's
+     code ran. Every time a tab loads, it also posts the token to a local
+     server (RULE-02). Both **must** be reported.
 
    This part **passes** when every genuine extension loaded, none of them
-   caused an alert, the canary was caught, and the monitor didn't crash.
+   caused an alert, the canary was caught both ways, and the monitor didn't
+   crash.
 
 ## Latest results
 
@@ -113,7 +121,7 @@ behaviour. See [verdicts](https://github.com/Vimal7747/extensionguard/blob/main/
 | Shai-Hulud package with obfuscated eval loader | CRITICAL (100) | obfuscated code: `bg.js` | PASS |
 | Cyberhaven-style hijacked patch update | HIGH (60) | an update started sending data to `cyberhavenext.workers.dev` | PASS |
 
-### Runtime: Chrome for Testing + extguard-monitor, 6 sites, 125 seconds
+### Runtime: Chrome for Testing + extguard-monitor, 6 sites, 134 seconds
 
 | Extension | Loaded | Alerts | Result |
 | --- | --- | --- | --- |
@@ -124,7 +132,7 @@ behaviour. See [verdicts](https://github.com/Vimal7747/extensionguard/blob/main/
 | React Developer Tools | yes | 0 | PASS |
 | JSON Formatter | yes | 0 | PASS |
 | Google Translate | yes | 0 | PASS |
-| ExtensionGuard canary (fake token, must be caught) | yes | 8 RULE-02 | PASS |
+| ExtensionGuard canary (fake token, must be caught) | yes | 8 RULE-02 (network), 1 RULE-04 (storage, at start-up) | PASS |
 
 ### Exact builds tested
 
@@ -141,10 +149,12 @@ reply for an extension includes `hash_sha256`.
 | JSON Formatter | `bcjindcccaagfpapjjmafapmmgkkhgoa` | 0.10.2 | 20,840 | `5e0ebde71ee60f997a9f5fc0850e6ae4a9f67006dbf662f00507f99e957c2b21` |
 | Google Translate | `aapbdbdomjkkjkaonfhkkikfgjllcleb` | 2.0.17 | 1,145,560 | `3f752c27ae39de4bfc881ecacea4a3b4c50c676daecfd9f2fc8c50f5688c8dd1` |
 
-## What the first run found
+## What the test has found
 
-The first version of this test was run by hand on 2026-10-07, against
-ExtensionGuard 0.3.0, and it failed:
+The test is only useful because it can fail. It has failed twice, and both
+times it found real problems.
+
+### First run, by hand (2026-10-07, ExtensionGuard 0.3.0)
 
 - **Static:** five of the seven genuine extensions were rated CRITICAL, one
   HIGH and one MEDIUM, all on permissions alone.
@@ -160,7 +170,36 @@ ExtensionGuard 0.3.0, and it failed:
 All of it was fixed in 0.4.0. The fixes are listed under "Fixed" in the
 [CHANGELOG](https://github.com/Vimal7747/extensionguard/blob/main/CHANGELOG.md),
 and unit tests now cover the shapes these extensions exposed. Verdicts now
-need evidence, not just permissions. The test was useful because it could fail, and it did.
+need evidence, not just permissions.
+
+### First run on GitHub (2026-10-14, ExtensionGuard 0.4.0)
+
+The first run on a GitHub Linux runner failed. uBlock Origin Lite raised
+two RULE-04 alerts: 565 KB and 455 KB written to storage "in one write".
+The same test had passed on a faster Windows PC. Working out why found
+three problems:
+
+- **The test depended on machine speed.** Extensions were loaded when
+  Chrome started, before the monitor attached. On a fast machine uBlock
+  finished copying its filter data into storage before the monitor was
+  watching, and on a slow one it didn't. Now Chrome starts empty, the
+  monitor attaches, and only then are the extensions installed, so every
+  machine sees the same thing.
+- **A real monitor bug, a regression in 0.4.0.** The canary was extended
+  to save its fake token to storage on its very first line, and the monitor
+  missed it. For a newly started extension worker, the in-extension hooks
+  (RULE-04, RULE-05, RULE-07) went in only after the worker's start-up code
+  had run. The extension-name lookup added in 0.4.0 used up the "pause
+  before the first script" the hooks rely on. Network rules weren't
+  affected. Fixed, with a unit test, and the canary now proves the hook
+  timing on every run.
+- **A false positive.** RULE-04 alerted on any storage write of 50,000
+  bytes or more, whatever it contained. uBlock's writes were its own
+  packaged cosmetic-filter CSS (`css.specific.easylist`,
+  `css.specific.ublock-filters`), on every install and filter update. Size
+  alone no longer alerts; credentials, cookie dumps and large encoded blobs
+  still do. That size check was never part of RULE-04's documented
+  behaviour.
 
 ## How to reproduce
 
@@ -205,9 +244,10 @@ Read these before citing the results.
   a Grammarly account), on other sites, or after days of use is not covered.
   Zero alerts means no false alarms *in this session*, not that these
   extensions can never trigger one.
-- **The monitor attaches a few seconds after Chrome starts,** as it would in
-  a real deployment. What an extension does in those first seconds is not
-  observed.
+- **Every extension is a fresh install.** The monitor sees first-install
+  behaviour and normal browsing. It doesn't see what happens to an
+  extension installed long ago, for example a data migration when it
+  updates.
 - **The MEDIUM results rely on the 0.4.0 verdict model.** A verified store
   build with no evidence is capped at MEDIUM; the same extension sideloaded,
   so not verifiable, would be capped at HIGH. A *malicious* extension whose
