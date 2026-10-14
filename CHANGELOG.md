@@ -5,6 +5,33 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- `tools/real_extension_check.py`: the real-extension test behind 0.4.0,
+  now reproducible by anyone. It downloads 7 genuine Web Store extensions
+  from Google and refuses any file whose SHA-256 differs from the store's.
+  It scans them with the real CLI and checks that 5 attack samples are still
+  rated HIGH or CRITICAL. With `--runtime` it also runs the extensions in
+  Chrome for Testing with `extguard-monitor` attached, alongside a test-only
+  canary extension that the monitor must catch - so "no alerts" proves the
+  monitor was watching, not asleep. Writes JSON and Markdown reports.
+  [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md)
+  documents the method, the results and the limitations.
+- `.github/workflows/real-extensions.yml` runs it weekly against the
+  current store versions, on demand, and on PRs that change it. The results
+  table is the run's job summary; failures are public annotations.
+
+### Changed
+
+- GitHub Actions: `upload-artifact` 7.0.2, `download-artifact` 8.0.2
+  (Dependabot).
+
+### Fixed
+
+- `tests/test_live_monitor.py` waits for Chrome to exit after killing it.
+  The weekly live job failed on 2026-10-12 with "subprocess N is still
+  running" during teardown (the monitor's own checks had passed).
+
 ## [0.4.0] — 2026-10-07
 
 Verdicts that need evidence, and fixes from testing ExtensionGuard on seven

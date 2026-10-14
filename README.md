@@ -3,6 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/extensionguard)](https://pypi.org/project/extensionguard/)
 [![Python](https://img.shields.io/pypi/pyversions/extensionguard)](https://pypi.org/project/extensionguard/)
 [![CI](https://github.com/Vimal7747/extensionguard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Vimal7747/extensionguard/actions/workflows/ci.yml)
+[![Real extensions](https://github.com/Vimal7747/extensionguard/actions/workflows/real-extensions.yml/badge.svg?branch=main)](https://github.com/Vimal7747/extensionguard/actions/workflows/real-extensions.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/Vimal7747/extensionguard/blob/main/LICENSE)
 
 > Defensive SOC tooling for detecting, alerting on, and remediating malicious browser-extension supply-chain attacks.
@@ -51,8 +52,9 @@ What's in the box:
 | Property | Value |
 | --- | --- |
 | Version | **0.4.0** |
-| Tests | **928** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
+| Tests | **963** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md)) |
+| Real-world test | **7** genuine Web Store extensions + 5 attack samples, static and in a real browser, re-run weekly (see [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md)) |
 | Lint | **0 findings** (`ruff check`) |
 | Python | 3.10 – 3.13 |
 | Runtime deps | `anthropic`, `requests`, `websockets`, `flask` |
@@ -64,6 +66,7 @@ Companion docs:
 - [CHANGELOG.md](https://github.com/Vimal7747/extensionguard/blob/main/CHANGELOG.md) — what changed between releases
 - [THREAT_MODEL.md](https://github.com/Vimal7747/extensionguard/blob/main/THREAT_MODEL.md) — trust boundaries + 13 catalogued threats
 - [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md) — measured baselines for every hot path
+- [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md) — results against real Web Store extensions, and how to reproduce them
 - [RELEASING.md](https://github.com/Vimal7747/extensionguard/blob/main/RELEASING.md) — release checklist for maintainers
 
 ---
@@ -150,7 +153,9 @@ extguard-sigma --output sigma/
   false CRITICALs into MEDIUM "review / allowlist" - while packages that
   exfiltrate or hide code stay CRITICAL. A malicious extension whose code
   looks clean is MEDIUM at first scan; the runtime monitor and the update
-  diff are what catch it when it acts.
+  diff are what catch it when it acts. That test is re-run weekly against
+  the current store versions - see
+  [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md).
 - **Baselines.** Each LOW / MEDIUM scan is saved as the reference for
   comparing the next version: its version for velocity, its code profile for
   the code diff. A build whose code changed (new endpoints, sensitive APIs,
@@ -530,12 +535,13 @@ extguard/                         (repository root)
     dashboard_templates/          - Jinja2 templates for the Flask UI
     dashboard_static/             - CSS for the Flask UI
 
-  tests/                          - 928 pytest tests
+  tests/                          - 963 pytest tests
     benchmarks/                   - 13 pytest-benchmark performance baselines
     fixtures/recorded/            - Real API responses the tests replay
     test_live_apis.py             - Opt-in contract tests against real APIs
     test_live_monitor.py          - Opt-in monitor test on a headless Chrome
-  tools/                          - Release checks + wheel smoke test (not shipped)
+  tools/                          - Release checks, wheel smoke test and the
+                                    real-extension check (not shipped)
   test_fixtures/                  - Simulated malicious + benign manifests
 
   extguard.conf.json              - Configuration template
@@ -567,6 +573,11 @@ pytest tests/benchmarks/ --benchmark-compare=baseline
 # network and Chrome)
 $env:EXTGUARD_LIVE_TESTS = "1"; pytest -m live
 
+# Scan 7 genuine Web Store extensions (downloaded from Google, SHA-256
+# checked) + attack samples; --runtime also runs them in Chrome for Testing
+# with the monitor attached. See REAL_WORLD_TESTING.md
+python tools/real_extension_check.py --runtime --chrome PATH\TO\chrome.exe
+
 # Lint + format check
 ruff check .
 ruff format --check .
@@ -592,6 +603,11 @@ and every pull request:
 real-Chrome monitor test weekly, and on any PR that changes them, so a
 change in an upstream API shows up as a failing job instead of a check that
 quietly stops working.
+
+`.github/workflows/real-extensions.yml` runs `tools/real_extension_check.py`
+weekly against the current Web Store versions of 7 genuine extensions, in a
+real browser too, and publishes the results table as the run's summary - see
+[REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md).
 
 `.github/workflows/release.yml` publishes a release when a `v*` tag is
 pushed - see [RELEASING.md](https://github.com/Vimal7747/extensionguard/blob/main/RELEASING.md).

@@ -1,0 +1,76 @@
+# .github/workflows/real-extensions.yml - ExtensionGuard vs REAL extensions
+#
+# Runs tools/real_extension_check.py on a fresh GitHub runner: downloads 7
+# popular, genuine extensions from the Chrome Web Store (each checked against
+# the store's SHA-256), scans them, checks that attack samples are still
+# caught, then runs all of them in Chrome for Testing with extguard-monitor
+# attached while it browses ordinary sites. See REAL_WORLD_TESTING.md.
+#
+# Weekly, so "no false positives on these extensions" is re-checked against
+# every new store version; also on demand, and on any PR that changes the
+# tool or this workflow. The results table is the run's job summary, the full
+# JSON report an artifact, and any failure a public annotation. Not a
+# required check: a store outage or an extension update must not block
+# unrelated PRs.
+
+name: Real extensions
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"   # Mondays 06:41 UTC
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/real-extensions.yml"
+      - "tools/real_extension_check.py"
+
+permissions:
+  contents: read
+
+jobs:
+  real-extensions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install ExtensionGuard
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Install Chrome for Testing
+        # Branded Chrome refuses --load-extension; Chrome for Testing is
+        # Google's build for automated testing. The download URL comes from
+        # Google's official version list (current Stable, linux64).
+        run: |
+          versions=https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json
+          url=$(curl -fsSL "$versions" \
+            | jq -r '.channels.Stable.downloads.chrome[] | select(.platform == "linux64") | .url')
+          echo "Downloading $url"
+          curl -fsSL -o "$RUNNER_TEMP/chrome-for-testing.zip" "$url"
+          unzip -q "$RUNNER_TEMP/chrome-for-testing.zip" -d "$RUNNER_TEMP/cft"
+          echo "CHROME_FOR_TESTING=$RUNNER_TEMP/cft/chrome-linux64/chrome" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/cft/chrome-linux64/chrome" --version
+
+      - name: Run the real-extension check
+        run: >-
+          python tools/real_extension_check.py --runtime --chrome "$CHROME_FOR_TESTING"
+          --json-report real-extensions.json --markdown real-extensions.md
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: real-extensions-report
+          path: |
+            real-extensions.json
+            real-extensions.md
+          if-no-files-found: ignore
