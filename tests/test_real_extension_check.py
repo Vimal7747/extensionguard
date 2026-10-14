@@ -7,6 +7,7 @@
 # rated HIGH is a failure, and silence from the monitor only counts when the
 # canary was caught.
 
+import asyncio
 import base64
 import io
 import json
@@ -16,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from extguard import behavioral_monitor as bm
 from extguard.behavioral_monitor import CREDENTIAL_PATTERNS
 from extguard.publisher_checker import _compute_extension_id
 from tools import real_extension_check as rec
@@ -222,11 +224,18 @@ def test_canary_sends_something_the_monitor_must_flag(tmp_path):
     manifest = json.loads((tmp_path / "manifest.json").read_text())
     code = (tmp_path / "bg.js").read_text()
     assert manifest["name"] == rec.CANARY_NAME
+    assert "storage" in manifest["permissions"]
+    # Network (RULE-02) on every page load...
     assert "http://127.0.0.1:4321/collect" in code
+    # ...and storage (RULE-04) on its FIRST line, before anything else runs:
+    # that only gets caught if the monitor's hooks are in place before the
+    # worker's own code - the 0.4.0 regression this canary found.
+    assert code.splitlines()[1].startswith("chrome.storage.local.set(")
     # The token is assembled at run time (no secret-looking string in the
-    # repo) - and the assembled value is one RULE-02 recognises.
+    # repo) - and the assembled value is one the monitor recognises.
     assert 'ghp_" + "x".repeat(36)' in code
     assert CREDENTIAL_PATTERNS["GitHub token"][0].search("token=ghp_" + "x" * 36)
+    assert bm.staged_credentials('{"stash":"ghp_' + "x" * 36 + '"}') == ["GitHub token"]
 
 
 def test_sink_records_the_canary_requests():
@@ -242,14 +251,32 @@ def test_sink_records_the_canary_requests():
     assert hits == ["/collect"]
 
 
-def test_chrome_keeps_its_sandbox_except_on_linux(monkeypatch, tmp_path):
+def test_chrome_starts_empty_and_keeps_its_sandbox_except_on_linux(monkeypatch, tmp_path):
     monkeypatch.setattr(rec.sys, "platform", "win32")
-    windows = rec.chrome_command(Path("chrome"), 9222, tmp_path, [tmp_path / "a", tmp_path / "b"])
+    windows = rec.chrome_command(Path("chrome"), 9222, tmp_path)
     assert "--no-sandbox" not in windows
-    assert f"--load-extension={tmp_path / 'a'},{tmp_path / 'b'}" in windows
-    assert windows[-1] == "about:blank"
+    # Extensions are installed over DevTools AFTER the monitor attaches, so
+    # every machine sees their first-install work - never at launch
+    assert not any(arg.startswith("--load-extension") for arg in windows)
+    assert "--enable-unsafe-extension-debugging" in windows
+    assert f"--user-data-dir={tmp_path}" in windows and windows[-1] == "about:blank"
     monkeypatch.setattr(rec.sys, "platform", "linux")
-    assert "--no-sandbox" in rec.chrome_command(Path("chrome"), 9222, tmp_path, [])
+    assert "--no-sandbox" in rec.chrome_command(Path("chrome"), 9222, tmp_path)
+
+
+def test_extensions_are_installed_into_the_running_browser():
+    class FakeDevTools:
+        def __init__(self):
+            self.calls = []
+
+        async def call(self, method, session=None, **params):
+            self.calls.append((method, params))
+            return {"id": "id-of-" + Path(params["path"]).name}
+
+    cdp = FakeDevTools()
+    ids = asyncio.run(rec.install_extensions(cdp, [Path("x/ublock"), Path("x/canary")]))
+    assert ids == ["id-of-ublock", "id-of-canary"]
+    assert [method for method, _ in cdp.calls] == ["Extensions.loadUnpacked"] * 2
 
 
 GENUINE = [
@@ -261,7 +288,10 @@ INSTALLED = [
     {"id": "f" * 32, "name": "JSON Formatter", "version": "0.1", "state": "ENABLED"},
     {"id": "c" * 32, "name": rec.CANARY_NAME, "version": "1.0", "state": "ENABLED"},
 ]
-CANARY_ALERT = {"rule": "RULE-02", "severity": "critical", "extension": {"id": "c" * 32}}
+CANARY_NET = {"rule": "RULE-02", "severity": "high", "extension": {"id": "c" * 32}}
+# Hook alerts can arrive before the monitor knows the name: matched by ID
+CANARY_STORE = {"rule": "RULE-04", "severity": "critical", "extension": {"id": "c" * 32}}
+CANARY_ALERTS = [CANARY_NET, CANARY_STORE]
 
 
 def _alert(ext_id, rule="RULE-04"):
@@ -274,29 +304,42 @@ def _alert(ext_id, rule="RULE-04"):
 
 
 def test_runtime_passes_when_only_the_canary_is_caught():
-    result = rec.judge_runtime(GENUINE, INSTALLED, [CANARY_ALERT], ["/collect"], "")
+    result = rec.judge_runtime(GENUINE, INSTALLED, CANARY_ALERTS, ["/collect"], "")
     assert result["problems"] == []
     assert result["canary"] == {
         "loaded": True,
         "requests_sent": 1,
-        "alerts": 1,
+        "alerts": 2,
         "rule02_alerts": 1,
+        "rule04_alerts": 1,
     }
     assert all(row["loaded"] and row["alerts"] == [] for row in result["extensions"])
 
 
 def test_alert_about_a_genuine_extension_is_a_false_alarm():
-    result = rec.judge_runtime(
-        GENUINE, INSTALLED, [CANARY_ALERT, _alert("e" * 32)], ["/collect"], ""
-    )
-    assert result["problems"] == ["Dark Reader: false alarm RULE-04 high: something"]
+    alert = _alert("e" * 32)
+    alert["detail"]["keys"] = ["css.specific.easylist"]
+    result = rec.judge_runtime(GENUINE, INSTALLED, CANARY_ALERTS + [alert], ["/collect"], "")
+    assert result["problems"] == [
+        "Dark Reader: false alarm RULE-04 high: something (keys: css.specific.easylist)"
+    ]
 
 
 def test_silence_without_the_canary_is_not_a_pass():
     result = rec.judge_runtime(GENUINE, INSTALLED, [], ["/collect"], "")
-    assert any("NOT detected" in p for p in result["problems"])
-    never_ran = rec.judge_runtime(GENUINE, INSTALLED, [CANARY_ALERT], [], "")
+    assert any("NOT detected (RULE-02)" in p for p in result["problems"])
+    never_ran = rec.judge_runtime(GENUINE, INSTALLED, CANARY_ALERTS, [], "")
     assert any("never ran" in p for p in never_ran["problems"])
+
+
+def test_canary_network_alone_is_not_enough():
+    """Network watching worked all along; the hooks did not see a worker's
+    start-up code (0.4.0 regression). Both must be proven every run."""
+    result = rec.judge_runtime(GENUINE, INSTALLED, [CANARY_NET], ["/collect"], "")
+    assert result["problems"] == [
+        "the canary's fake token in storage was NOT detected (RULE-04) - the monitor's "
+        "hooks were not in place when the extension started"
+    ]
 
 
 def test_runtime_problems_for_missing_extensions_strangers_and_crashes():
@@ -304,7 +347,7 @@ def test_runtime_problems_for_missing_extensions_strangers_and_crashes():
     result = rec.judge_runtime(
         GENUINE,
         installed,
-        [CANARY_ALERT, _alert("9" * 32)],
+        CANARY_ALERTS + [_alert("9" * 32)],
         ["/collect"],
         "Traceback (most recent call last):\nRuntimeError: boom\n",
     )
@@ -353,7 +396,13 @@ def _full_report(passed=True) -> dict:
             "sites": ["https://example.com/"],
             "seconds": 100,
             "extensions": [{"name": "Weird | Name", "loaded": True, "alerts": []}],
-            "canary": {"loaded": True, "requests_sent": 3, "alerts": 3, "rule02_alerts": 3},
+            "canary": {
+                "loaded": True,
+                "requests_sent": 3,
+                "alerts": 4,
+                "rule02_alerts": 3,
+                "rule04_alerts": 1,
+            },
             "problems": [],
         },
         "passed": passed,
@@ -366,7 +415,10 @@ def test_markdown_summary():
     assert "Chrome for Testing 155.0.8059.39" in text
     assert "| Weird / Name | 1.0 | `abababababab` | 79 | MEDIUM (44) | none | PASS |" in text
     assert "| TeamPCP | CRITICAL (100) | exfil | PASS |" in text
-    assert f"| {rec.CANARY_NAME} (fake token, must be caught) | yes | 3 RULE-02 | PASS |" in text
+    assert (
+        f"| {rec.CANARY_NAME} (fake token, must be caught) | yes "
+        "| 3 RULE-02 (network), 1 RULE-04 (storage, at start-up) | PASS |"
+    ) in text
     assert "### Problems" not in text
 
 
@@ -389,3 +441,9 @@ def test_github_job_summary_and_public_annotations(monkeypatch, tmp_path, capsys
 def test_runtime_without_chrome_is_a_usage_error(capsys):
     assert rec.main(["--runtime"]) == 2
     assert "--chrome" in capsys.readouterr().err
+
+
+def test_work_dir_must_be_empty(tmp_path, capsys):
+    (tmp_path / "left-over.txt").write_text("x")
+    assert rec.main(["--work-dir", str(tmp_path)]) == 2
+    assert "not empty" in capsys.readouterr().err

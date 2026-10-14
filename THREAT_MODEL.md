@@ -349,7 +349,10 @@ Two more points about the CDP channel:
   binding without the token is ignored, so it can't flood the SOC with fake
   RULE-04/05/07 alerts. It can still stay quiet: hooks installed in
   JavaScript can in principle be detected and avoided by code that runs
-  first. The network rules don't depend on hooks.
+  first. The network rules don't depend on hooks. In a newly started
+  extension worker, the hooks are in place before its first line runs;
+  0.4.0 broke this by accident, so the weekly real-extension check's canary
+  now proves it on every run.
 
 ---
 

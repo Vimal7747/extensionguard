@@ -576,7 +576,10 @@ async def _handle_hook_event(event: dict, target: dict, ext_id: str, alert_queue
         residue = CREDENTIAL_PATTERNS["JWT"][0].sub("", _DATA_URL.sub("", sample))
         if STAGED_BLOB.search(residue):
             reasons.append("large base64 blob")
-        if size >= 50_000:
+        # Size alone is not evidence: extensions cache big data legitimately
+        # (uBlock Origin Lite stores ~1 MB of its own filter CSS on install,
+        # found by the real-extension check). It's context for a real reason.
+        if reasons and size >= 50_000:
             reasons.append(f"{size:,} bytes in one write")
         if reasons:
             await alert_queue.put(
@@ -1121,7 +1124,15 @@ class ExtensionMonitor:
             # Installing twice is harmless - the hook checks its marker.
             await self._install_hooks(entry, context_id=None)
         if role == "extension" and ext_id not in self.ext_names:
-            asyncio.create_task(self._resolve_name(entry))
+            if hook_before_first_script:
+                # Not yet: an evaluate sent now runs BEFORE the worker's own
+                # code and uses up the "before first script" pause - the hooks
+                # then went in after the worker's start-up code had run (0.4.0
+                # regression, found by the real-extension check's canary).
+                # Asked once the hooks are in: see _on_instrumentation_pause.
+                entry["name_pending"] = True
+            else:
+                asyncio.create_task(self._resolve_name(entry))
 
     async def _resolve_name(self, entry: dict):
         """Ask an extension context for its manifest name, for readable alerts."""
@@ -1179,6 +1190,8 @@ class ExtensionMonitor:
             await self._fire("Debugger.setSkipAllPauses", {"skip": True}, session)
         # Whatever the reason, never leave the extension frozen
         await self._fire("Debugger.resume", None, session)
+        if entry.get("hooked") and entry.pop("name_pending", False):
+            asyncio.create_task(self._resolve_name(entry))
 
     async def _install_hooks(self, entry: dict, context_id: int | None, timeout: float = 15):
         params = {

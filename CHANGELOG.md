@@ -11,10 +11,15 @@ versioning follows [SemVer](https://semver.org/).
   now reproducible by anyone. It downloads 7 genuine Web Store extensions
   from Google and refuses any file whose SHA-256 differs from the store's.
   It scans them with the real CLI and checks that 5 attack samples are still
-  rated HIGH or CRITICAL. With `--runtime` it also runs the extensions in
-  Chrome for Testing with `extguard-monitor` attached, alongside a test-only
-  canary extension that the monitor must catch - so "no alerts" proves the
-  monitor was watching, not asleep. Writes JSON and Markdown reports.
+  rated HIGH or CRITICAL. With `--runtime` it starts Chrome for Testing
+  empty, attaches `extguard-monitor`, and only then installs the extensions,
+  so every machine observes their first-install behaviour. A test-only
+  canary extension must be caught twice: a fake token saved to storage on
+  its first line (RULE-04, proving the hooks were in place before its code
+  ran) and sent over the network (RULE-02). So "no alerts" proves the
+  monitor was watching, not asleep. Writes JSON and Markdown reports;
+  `--work-dir` keeps the monitor log, alerts and profile for investigating
+  a failure.
   [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md)
   documents the method, the results and the limitations.
 - `.github/workflows/real-extensions.yml` runs it weekly against the
@@ -25,9 +30,24 @@ versioning follows [SemVer](https://semver.org/).
 
 - GitHub Actions: `upload-artifact` 7.0.2, `download-artifact` 8.0.2
   (Dependabot).
+- RULE-04 no longer alerts on the size of a storage write alone (50,000
+  bytes or more). uBlock Origin Lite copies about 1 MB of its own
+  cosmetic-filter CSS into `chrome.storage` on every install and filter
+  update. Credentials, cookie dumps and large encoded blobs still alert,
+  with the size added as context. This matches how RULE-04 was documented.
 
 ### Fixed
 
+- **Monitor (0.4.0 regression):** for a newly started extension worker,
+  the hooks behind RULE-04, RULE-05 and RULE-07 went in only after the
+  worker's start-up code had run. The extension-name lookup added in 0.4.0
+  was sent right after the worker was resumed. Chrome ran it before the
+  worker's own code, and that used up the "pause before the first script"
+  the hooks are installed at. So an extension could stage stolen data,
+  disable another extension or bulk-read cookies at start-up without an
+  alert. Network rules (RULE-01/02/03) were not affected. The name is now
+  looked up once the hooks are in. Found by the real-extension check's
+  canary on its first run.
 - `tests/test_live_monitor.py` waits for Chrome to exit after killing it.
   The weekly live job failed on 2026-10-12 with "subprocess N is still
   running" during teardown (the monitor's own checks had passed).
