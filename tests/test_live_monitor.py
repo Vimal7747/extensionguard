@@ -128,16 +128,26 @@ def chrome():
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    bm._configure_endpoint("127.0.0.1", port)
-    for _ in range(60):
-        try:
-            yield bm.get_browser_ws_url()
-            break
-        except RuntimeError:
-            time.sleep(0.25)
-    proc.kill()
-    time.sleep(0.5)
-    shutil.rmtree(profile, ignore_errors=True)
+    try:
+        bm._configure_endpoint("127.0.0.1", port)
+        ws_url = None
+        for _ in range(60):
+            try:
+                ws_url = bm.get_browser_ws_url()
+                break
+            except RuntimeError:
+                time.sleep(0.25)
+        if ws_url is None:
+            pytest.fail("Chrome started but its DevTools endpoint never answered")
+        yield ws_url
+    finally:
+        # kill() only SENDS the signal. Wait for Chrome to actually exit:
+        # if it is still shutting down when Python cleans up `proc`, Popen
+        # warns "subprocess N is still running", and pytest.ini turns that
+        # warning into a teardown failure (seen on a slow CI runner).
+        proc.kill()
+        proc.wait(timeout=30)
+        shutil.rmtree(profile, ignore_errors=True)
 
 
 def test_monitor_against_real_chrome(chrome, site, monkeypatch):
