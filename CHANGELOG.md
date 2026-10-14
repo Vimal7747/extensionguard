@@ -5,6 +5,28 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-10-14
+
+A security fix for the runtime monitor, and the real-extension test as a
+tool anyone can run. In 0.4.0 the monitor's in-extension hooks (RULE-04,
+RULE-05, RULE-07) missed what a newly started extension worker did in its
+start-up code. The new weekly real-extension check found this on its first
+run, along with a RULE-04 false alarm on uBlock Origin Lite. Upgrade if you
+run `extguard-monitor`.
+
+### Security
+
+- **Monitor (0.4.0 regression):** for a newly started extension worker,
+  the hooks behind RULE-04, RULE-05 and RULE-07 went in only after the
+  worker's start-up code had run. The extension-name lookup added in 0.4.0
+  was sent right after the worker was resumed. Chrome ran it before the
+  worker's own code, and that used up the "pause before the first script"
+  the hooks are installed at. So an extension could stage stolen data,
+  disable another extension or bulk-read cookies at start-up without an
+  alert. Network rules (RULE-01/02/03) were not affected. The name is now
+  looked up once the hooks are in (`extguard/behavioral_monitor.py`).
+  Found by the real-extension check's canary on its first run.
+
 ### Added
 
 - `tools/real_extension_check.py`: the real-extension test behind 0.4.0,
@@ -38,16 +60,6 @@ versioning follows [SemVer](https://semver.org/).
 
 ### Fixed
 
-- **Monitor (0.4.0 regression):** for a newly started extension worker,
-  the hooks behind RULE-04, RULE-05 and RULE-07 went in only after the
-  worker's start-up code had run. The extension-name lookup added in 0.4.0
-  was sent right after the worker was resumed. Chrome ran it before the
-  worker's own code, and that used up the "pause before the first script"
-  the hooks are installed at. So an extension could stage stolen data,
-  disable another extension or bulk-read cookies at start-up without an
-  alert. Network rules (RULE-01/02/03) were not affected. The name is now
-  looked up once the hooks are in. Found by the real-extension check's
-  canary on its first run.
 - `tests/test_live_monitor.py` waits for Chrome to exit after killing it.
   The weekly live job failed on 2026-10-12 with "subprocess N is still
   running" during teardown (the monitor's own checks had passed).

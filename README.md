@@ -51,7 +51,7 @@ What's in the box:
 
 | Property | Value |
 | --- | --- |
-| Version | **0.4.0** |
+| Version | **0.4.1** |
 | Tests | **970** (`pytest`; 4 run on Windows only) + 5 opt-in live tests (real APIs, headless Chrome) |
 | Benchmarks | **13** in `tests/benchmarks/` (see [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md)) |
 | Real-world test | **7** genuine Web Store extensions + 5 attack samples, static and in a real browser, re-run weekly (see [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md)) |
@@ -97,7 +97,7 @@ pip install -e ".[dev]"
 ```powershell
 docker compose up -d                  # full SOC deployment
 # OR
-docker run -p 127.0.0.1:5000:5000 extensionguard:0.4.0   # dashboard, localhost only
+docker run -p 127.0.0.1:5000:5000 extensionguard:0.4.1   # dashboard, localhost only
 ```
 
 ### Run a scan
