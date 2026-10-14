@@ -6,9 +6,9 @@ services actually send.
 
 | File | Source | Used by |
 |---|---|---|
-| `cws_known_extension.xml` | Chrome Web Store update endpoint, Google Translate (`aapbdbdomjkkjkaonfhkkikfgjllcleb`) | `test_publisher_checker.py` |
-| `cws_unknown_extension.xml` | Same endpoint, an ID that doesn't exist (`a` × 32) | `test_publisher_checker.py` |
-| `crx3_header_google_translate.bin` | The CRX3 signing header (public keys + signatures only, no extension code) cut from the Google Translate `.crx` | `test_publisher_checker.py` |
+| `cws_known_extension.xml` | Chrome Web Store update endpoint, Google Translate (`aapbdbdomjkkjkaonfhkkikfgjllcleb`) | `test_publisher_checker.py`, `test_real_extension_check.py` |
+| `cws_unknown_extension.xml` | Same endpoint, an ID that doesn't exist (`a` × 32) | `test_publisher_checker.py`, `test_real_extension_check.py` |
+| `crx3_header_google_translate.bin` | The CRX3 signing header (public keys + signatures only, no extension code) cut from the Google Translate `.crx` | `test_publisher_checker.py`, `test_real_extension_check.py` |
 | `osv_querybatch_lodash_isnumber.json` | `POST https://api.osv.dev/v1/querybatch` for lodash 4.17.20 and is-number 7.0.0 | `test_osv_lookup.py` |
 | `osv_hash_query_rejected.json` | `POST https://api.osv.dev/v1/query` with a `{"hash": ...}` body. OSV answers HTTP 400, which is why ExtensionGuard no longer sends it | `test_osv_lookup.py` |
 
