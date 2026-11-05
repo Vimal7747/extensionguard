@@ -5,6 +5,21 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- `[dev]` extras include PyYAML, so the tests that parse every exported
+  Sigma rule as YAML run in CI. Without it they were silently skipped.
+- `[dev]` extras need pytest-asyncio 0.24 or newer.
+
+### Fixed
+
+- The test suite crashed before running any test with pytest-asyncio 1.4
+  (released in late October). Leaving `asyncio_default_fixture_loop_scope`
+  unset is now a deprecation warning, which `pytest.ini`'s
+  `filterwarnings = error` turned into an internal error (exit code 3).
+  The weekly live job failed on 2026-11-02, and CI would have failed on its
+  next run. `pytest.ini` now sets it to `function`.
+
 ## [0.4.1] — 2026-10-14
 
 A security fix for the runtime monitor, and the real-extension test as a

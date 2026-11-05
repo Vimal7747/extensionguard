@@ -50,8 +50,10 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-mock>=3.12",
-    "pytest-asyncio>=0.23",   # For testing behavioral_monitor's async CDP handlers
+    "pytest-asyncio>=0.24",   # For testing behavioral_monitor's async CDP handlers
+                              # (0.24+: asyncio_default_fixture_loop_scope in pytest.ini)
     "pytest-benchmark>=4.0",  # For tests/benchmarks/ throughput measurements
+    "pyyaml>=6.0",            # Parses the exported Sigma rules (those tests skip without it)
     "ruff>=0.5",
     "build>=1.0",
 ]
