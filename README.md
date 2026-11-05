@@ -64,7 +64,7 @@ What's in the box:
 Companion docs:
 
 - [CHANGELOG.md](https://github.com/Vimal7747/extensionguard/blob/main/CHANGELOG.md) — what changed between releases
-- [THREAT_MODEL.md](https://github.com/Vimal7747/extensionguard/blob/main/THREAT_MODEL.md) — trust boundaries + 13 catalogued threats
+- [THREAT_MODEL.md](https://github.com/Vimal7747/extensionguard/blob/main/THREAT_MODEL.md) — trust boundaries + 14 catalogued threats
 - [PERFORMANCE.md](https://github.com/Vimal7747/extensionguard/blob/main/PERFORMANCE.md) — measured baselines for every hot path
 - [REAL_WORLD_TESTING.md](https://github.com/Vimal7747/extensionguard/blob/main/REAL_WORLD_TESTING.md) — results against real Web Store extensions, and how to reproduce them
 - [RELEASING.md](https://github.com/Vimal7747/extensionguard/blob/main/RELEASING.md) — release checklist for maintainers
@@ -119,6 +119,9 @@ extguard-remediate --from-triage triage.json --dry-run --pd-action none
 
 # Browse quarantine cases, verify integrity, approve remediations
 extguard-dashboard            # http://127.0.0.1:5000
+# Behind an authenticating reverse proxy, name it: it answers to no other
+# host names (protection against DNS rebinding)
+extguard-dashboard --allowed-host soc.example.com
 extguard-remediate --process-queue    # execute what analysts approved
 
 # Pull latest threat intel from a GitHub repo, review it, make it live

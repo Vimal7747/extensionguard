@@ -5,6 +5,31 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+
+- **Dashboard: DNS rebinding.** A web page could make its own domain
+  resolve to 127.0.0.1 and then use the dashboard as if it were its own
+  site. It could read every case and approve or reject remediations; a
+  reject marks an extension as a false positive. The dashboard has no login
+  and treats any session alike, so the CSRF tokens didn't stop it. Found in
+  a security review and confirmed with a proof of concept. The dashboard now
+  answers only to `localhost`, loopback addresses, a specific bind address,
+  and names given with the new `--allowed-host` option or
+  `EXTGUARD_DASHBOARD_HOSTS` (for a reverse proxy); anything else gets 400.
+  `/api/health` stays open (no case data).
+- Dashboard pages send `X-Frame-Options: DENY`, `Content-Security-Policy:
+  frame-ancestors 'none'`, `X-Content-Type-Options: nosniff` and
+  `Referrer-Policy: no-referrer`, so no other site can frame them
+  (clickjacking).
+- `extguard-dashboard --debug` (Werkzeug's interactive debugger) is refused
+  unless the dashboard binds to a loopback address.
+- Minimum versions now exclude releases with known advisories:
+  `requests>=2.33.0` (CVE-2024-47081, CVE-2024-35195, CVE-2026-25645) and
+  `flask>=3.1.3` (CVE-2026-27205). Fresh installs already got fixed
+  versions; this stops an older environment from satisfying the
+  requirements. `requirements.txt` was also missing Flask, which the
+  dashboard needs.
+
 ### Changed
 
 - `[dev]` extras include PyYAML, so the tests that parse every exported
