@@ -23,6 +23,9 @@
 #     recorded in the queue and the chain of custody (with REMOTE_USER when a
 #     proxy provides it) - the server's own OS account says nothing about who
 #     clicked the button.
+#   - Answers only to localhost, loopback addresses and names given with
+#     --allowed-host, so a web page can't reach it through DNS rebinding.
+#   - Sends X-Frame-Options / CSP frame-ancestors: never framed by other sites.
 #   - State-changing POSTs require a CSRF token (per-session, in-memory).
 #   - case_id values are validated against a strict allow-list pattern to
 #     prevent path traversal into the quarantine directory.
@@ -34,6 +37,7 @@
 
 import argparse
 import getpass
+import ipaddress
 import json
 import os
 import re
@@ -71,17 +75,55 @@ ANALYST_PATTERN = re.compile(r"^[\w .@'-]{1,64}\Z")
 # How much of the alert log the dashboard reads from the end of the file
 ALERT_TAIL_MAX_BYTES = 8 * 1024 * 1024
 
+# Host names the dashboard answers to - the name a browser puts in the Host
+# header. The dashboard has no login; it relies on being reachable only from
+# this machine. But a web page can make its OWN domain resolve to 127.0.0.1
+# ("DNS rebinding") and then talk to the dashboard as if it were its own site:
+# read every case, and approve or reject remediations - CSRF token included,
+# since it simply gets a session of its own. The browser still sends the
+# page's domain as Host, so answering only to known names stops that.
+# localhost and loopback addresses always work; add the name of a reverse
+# proxy with --allowed-host or this environment variable (comma-separated).
+HOSTS_ENV = "EXTGUARD_DASHBOARD_HOSTS"
+
+
+def host_name(host_header: str) -> str:
+    """
+    The name part of a Host header, normalised:
+      'LocalHost:5000' -> 'localhost'    '[::1]:5000' -> '::1'
+      'soc.example.com.' -> 'soc.example.com'
+    """
+    host = (host_header or "").strip().lower()
+    if host.startswith("["):  # IPv6 literal, e.g. [::1]:5000
+        return host[1:].partition("]")[0]
+    return host.partition(":")[0].rstrip(".")
+
+
+def is_allowed_host(host_header: str, allowed: set) -> bool:
+    """True for localhost, any loopback address, and the configured names."""
+    name = host_name(host_header)
+    if not name:
+        return False
+    if name == "localhost" or name in allowed:
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback  # 127.0.0.1, 127.x, ::1
+    except ValueError:
+        return False  # a domain name nobody told us about
+
 
 def create_app(
     quarantine_root: Path | None = None,
     alerts_log: Path | None = None,
     queue_file: Path | None = None,
+    allowed_hosts: list | None = None,
 ) -> Flask:
     """
     Build the Flask app with the configured paths.
 
     Factored as a create_app() function so tests can spin up isolated instances
     with their own quarantine / log / queue paths via Flask's test client.
+    allowed_hosts: host names to answer to besides localhost / loopback.
     """
     app = Flask(
         __name__,
@@ -99,6 +141,33 @@ def create_app(
     # tokens stored in the session are invalidated when the server restarts,
     # which is the right behaviour for a local analyst tool.
     app.config["SECRET_KEY"] = secrets.token_urlsafe(32)
+    app.config["ALLOWED_HOSTS"] = {host_name(h) for h in (allowed_hosts or []) if host_name(h)}
+
+    # ----- Request guards ----------------------------------------------------
+
+    @app.before_request
+    def refuse_unknown_hosts():
+        # /api/health stays open: it holds no case data, and container
+        # orchestrators probe it by IP address
+        if request.path == "/api/health":
+            return None
+        if not is_allowed_host(request.host, app.config["ALLOWED_HOSTS"]):
+            log.warning(
+                "Refused a request for unknown host %r (DNS rebinding?)", request.host[:100]
+            )
+            abort(400, "Unknown host. If this is your reverse proxy, start the dashboard "
+                       "with --allowed-host <its name>.")  # fmt: skip
+        return None
+
+    @app.after_request
+    def security_headers(response):
+        # Never shown inside another site's frame (clickjacking), no MIME
+        # sniffing, and case URLs never leak in a Referer header
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        return response
 
     # ----- Routes ----------------------------------------------------------
 
@@ -457,7 +526,28 @@ def _check_csrf():
 # ---------------------------------------------------------------------------
 
 
-def main():
+def _is_loopback_bind(host: str) -> bool:
+    """True when the bind address only accepts connections from this machine."""
+    try:
+        return host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def allowed_hosts_for(bind_host: str, extra: list) -> list:
+    """
+    Host names to answer to besides localhost / loopback: --allowed-host,
+    EXTGUARD_DASHBOARD_HOSTS, and a specific bind address (so binding to
+    10.0.0.5 serves http://10.0.0.5:5000). Never the 0.0.0.0 / :: wildcards.
+    """
+    hosts = list(extra)
+    hosts += [h.strip() for h in os.environ.get(HOSTS_ENV, "").split(",") if h.strip()]
+    if bind_host not in ("0.0.0.0", "::", ""):
+        hosts.append(bind_host)
+    return hosts
+
+
+def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="ExtensionGuard analyst dashboard",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -496,11 +586,29 @@ def main():
         help="Path to the remediation queue file (default: ~/.extguard/remediation_queue.jsonl)",
     )
     parser.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Another host name to answer to, e.g. your reverse proxy's (repeatable; also "
+        f"{HOSTS_ENV}=a,b). localhost and loopback addresses always work; requests for "
+        "any other name are refused (DNS-rebinding protection).",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable Flask debug mode (auto-reload, debug pages). LOCAL USE ONLY.",
+        help="Enable Flask debug mode (auto-reload, debug pages). Only with a localhost --host.",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+
+    if args.debug and not _is_loopback_bind(args.host):
+        # Debug mode serves Werkzeug's interactive Python console on errors
+        print(
+            f"ERROR: --debug exposes an interactive debugger; it can't be used with "
+            f"--host {args.host}. Use a localhost address.",
+            file=sys.stderr,
+        )
+        return 2
 
     if args.host != "127.0.0.1":
         print(
@@ -513,9 +621,12 @@ def main():
         quarantine_root=args.quarantine,
         alerts_log=args.alerts_log,
         queue_file=args.queue_file,
+        allowed_hosts=allowed_hosts_for(args.host, args.allowed_host),
     )
 
     print(f"ExtensionGuard dashboard listening on http://{args.host}:{args.port}")
+    extra = ", ".join(sorted(app.config["ALLOWED_HOSTS"]))
+    print(f"  Answers to:      localhost, loopback addresses{', ' + extra if extra else ''}")
     print(f"  Quarantine root: {app.config['QUARANTINE_ROOT']}")
     if app.config["ALERTS_LOG"]:
         print(f"  Alerts log:      {app.config['ALERTS_LOG']}")
@@ -524,7 +635,8 @@ def main():
     print("  GitHub TTP webhook: run `extguard-webhook` separately (not served here)")
 
     app.run(host=args.host, port=args.port, debug=args.debug)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

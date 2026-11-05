@@ -434,6 +434,42 @@ scores LOW / MEDIUM. If that first build was already malicious, later diffs
 are relative to malicious code; the absolute findings (exfil endpoints,
 obfuscation, remote code) still score on every scan.
 
+---
+
+### T14. A web page reaching the localhost dashboard (DNS rebinding, clickjacking)
+
+**Description:** The dashboard listens on 127.0.0.1 and has no login, so
+"only this machine can reach it" is its access control. A web page the
+analyst visits can break that. With **DNS rebinding**, the page makes its
+own domain resolve to 127.0.0.1, so its scripts are same-origin with the
+dashboard. CSRF tokens don't help, because the page gets a session and a
+token of its own. Found in the 2026-11-05 security review: a request for
+`attacker.example` listed every case and queued an "approve: kill". It
+could equally have rejected a case, marking an attacker's own extension as
+a false positive. **Clickjacking:** a page could show the dashboard in an
+invisible frame and trick clicks on it.
+
+**Severity:** Medium (before the fix). It needs the analyst to visit the
+page while the dashboard runs; newer Chrome versions may block or prompt
+for local-network requests, while other browsers may not.
+
+**Mitigations:**
+
+- The dashboard answers only to `localhost`, loopback addresses, a specific
+  bind address, and names given with `--allowed-host` /
+  `EXTGUARD_DASHBOARD_HOSTS` (for a reverse proxy). Anything else gets 400
+  before any route runs. The browser always sends the page's domain in the
+  `Host` header, so a rebinding page is refused. `/api/health` stays open:
+  it holds no case data, and orchestrators probe it by IP address.
+- `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors
+  'none'`: no other site can frame it.
+- `--debug` (Werkzeug's interactive debugger) is refused unless the bind
+  address is loopback.
+
+**Residual risk:** A name added with `--allowed-host` is trusted. Behind a
+reverse proxy, the proxy's authentication is what protects the dashboard
+(R10).
+
 ## Residual risks summary
 
 | # | Risk | Severity | Notes |
@@ -447,7 +483,7 @@ obfuscation, remote code) still score on every scan.
 | R7 | Local attacker can bind CDP port first | Low | Detect by absence — empty target list is a signal |
 | R8 | TTP library text reaches Claude's system prompt | Medium | Staged sync + analyst activation, optional signed-commit requirement, size caps, reference-data framing (T12). Bounded by R2 |
 | R9 | Chain-of-custody HMAC key readable by the same OS account | Medium | Proves integrity against anyone without the key. Set `EXTGUARD_COC_KEY` from a secrets manager and ship `.hmac` values to the SIEM for stronger guarantees |
-| R10 | Dashboard has no authentication; analyst name is self-asserted | Medium | Localhost-only by default. Put it behind an authenticating reverse proxy that sets `REMOTE_USER` if more than one person uses it |
+| R10 | Dashboard has no authentication; analyst name is self-asserted | Medium | Localhost-only by default, and answers only to known host names, so web pages can't reach it through DNS rebinding (T14). Put it behind an authenticating reverse proxy that sets `REMOTE_USER` if more than one person uses it |
 | R11 | Webhook delivery log is bounded (2,000 IDs) | Low | A replay of a delivery older than that re-runs a sync of the current repo state - staged, so still reviewed |
 | R12 | Workspace blocking not exercised against a live Google tenant | Medium (operational) | Request shape follows Google's documented `orgunits:batchModify` format and is unit-tested; verify with `--dry-run` and a test org unit first |
 | R13 | First scanned build becomes the baseline | Low | Absolute code findings still score every scan (T13) |
@@ -479,3 +515,5 @@ disclosure. We aim to acknowledge within 72 hours.
 | 2026-09 | Review fixes: ID validation, signed CoC, max(Stage 1, AI) verdict | T2, T5, T6 |
 | 2026-09 | Separate webhook server, staged TTP sync, queue consumer, baseline gating, monitor hook tokens | T6, T10, T11, T12, T13 |
 | 2026-09 | P0 review fixes: input limits + schema validation; prompt boundary escaping + max(Stage 1, AI) verdict; HMAC-signed chain of custody; extension-ID validation before policy writes; Slack mrkdwn escaping | T1, T2, T5, T6; R1, R2 |
+| 2026-10 | Monitor hooks in place before a new extension worker's first line (0.4.0 regression), checked weekly by the real-extension canary | T10 |
+| 2026-11 | Security review: dashboard Host-header allow-list (DNS rebinding), anti-framing headers, `--debug` only on loopback; dependency floors above known advisories | T14; R10 |

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from extguard import dashboard
 from extguard.dashboard import CASE_ID_PATTERN, create_app
 from extguard.remediators import forensics
 
@@ -418,3 +419,112 @@ class TestVerifyIntegration:
         )
         assert b"FAIL" in resp.data
         assert b"manifest.json" in resp.data
+
+
+# ---------------------------------------------------------------------------
+# DNS rebinding + framing (security review, 2026-11-05)
+# ---------------------------------------------------------------------------
+#
+# A web page can make its own domain resolve to 127.0.0.1. It is then
+# same-origin with the dashboard - the CSRF token doesn't help, since the page
+# simply gets a session of its own. Before the fix, a request for
+# attacker.example listed every case and queued an "approve: kill". The
+# browser still sends the page's domain in the Host header, so the dashboard
+# now answers only to localhost, loopback addresses and configured names.
+
+ATTACKER = "http://attacker.example:5000"
+
+
+def _csrf_for(client, case_name, base_url="http://localhost"):
+    page = client.get(f"/case/{case_name}", base_url=base_url)
+    return re.search(rb'name="_csrf" value="([^"]+)"', page.data).group(1).decode()
+
+
+class TestDnsRebinding:
+    @pytest.mark.parametrize("path", ["/", "/api/cases", "/api/alerts"])
+    def test_unknown_host_is_refused(self, client, path):
+        assert client.get(path, base_url=ATTACKER).status_code == 400
+
+    def test_case_page_refused_so_no_csrf_token_leaks(self, client, real_case):
+        resp = client.get(f"/case/{real_case.name}", base_url=ATTACKER)
+        assert resp.status_code == 400
+        assert b"_csrf" not in resp.data
+
+    def test_rebound_approve_writes_nothing(self, client, real_case, queue_file):
+        csrf = _csrf_for(client, real_case.name)  # even holding a valid token
+        resp = client.post(
+            f"/case/{real_case.name}/approve",
+            base_url=ATTACKER,
+            data={"_csrf": csrf, "action": "kill", "analyst": "Mallory"},
+        )
+        assert resp.status_code == 400
+        assert not queue_file.exists()
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://localhost",
+            "http://LocalHost:5000",
+            "http://127.0.0.1:5000",
+            "http://127.0.0.2:5000",  # all of 127.0.0.0/8 is loopback
+            "http://[::1]:5000",
+        ],
+    )
+    def test_local_names_work(self, client, base_url):
+        assert client.get("/", base_url=base_url).status_code == 200
+
+    def test_configured_name_works(self, quarantine_dir, alerts_log, queue_file):
+        app = create_app(quarantine_root=quarantine_dir, alerts_log=alerts_log,
+                         queue_file=queue_file, allowed_hosts=["SOC.example.com"])  # fmt: skip
+        client = app.test_client()
+        assert client.get("/", base_url="https://soc.example.com").status_code == 200
+        assert client.get("/", base_url="https://evil.example.com").status_code == 400
+
+    def test_health_check_answers_any_host(self, client):
+        """Orchestrators probe by IP; it holds no case data."""
+        assert client.get("/api/health", base_url="http://10.0.0.7:5000").status_code == 200
+
+    @pytest.mark.parametrize(
+        "header, name",
+        [
+            ("LocalHost:5000", "localhost"),
+            ("[::1]:5000", "::1"),
+            ("soc.example.com.", "soc.example.com"),
+            ("127.0.0.1", "127.0.0.1"),
+            ("", ""),
+        ],
+    )
+    def test_host_name(self, header, name):
+        assert dashboard.host_name(header) == name
+
+    def test_lookalike_names_are_not_local(self):
+        for host in ("localhost.attacker.example", "127.0.0.1.nip.io", "attacker.localhost.com"):
+            assert not dashboard.is_allowed_host(host, set())
+
+
+class TestSecurityHeaders:
+    def test_pages_cannot_be_framed(self, client):
+        resp = client.get("/")
+        assert resp.headers["X-Frame-Options"] == "DENY"
+        assert resp.headers["Content-Security-Policy"] == "frame-ancestors 'none'"
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        assert resp.headers["Referrer-Policy"] == "no-referrer"
+
+    def test_refused_responses_carry_them_too(self, client):
+        assert client.get("/", base_url=ATTACKER).headers["X-Frame-Options"] == "DENY"
+
+
+class TestDashboardCli:
+    def test_debug_mode_refused_off_localhost(self, capsys):
+        assert dashboard.main(["--debug", "--host", "0.0.0.0"]) == 2
+        assert "debugger" in capsys.readouterr().err
+
+    def test_allowed_hosts_from_flags_env_and_bind_address(self, monkeypatch):
+        monkeypatch.setenv(dashboard.HOSTS_ENV, "proxy.example, other.example")
+        hosts = dashboard.allowed_hosts_for("10.0.0.5", ["soc.example"])
+        assert hosts == ["soc.example", "proxy.example", "other.example", "10.0.0.5"]
+
+    def test_wildcard_bind_is_never_an_allowed_name(self, monkeypatch):
+        monkeypatch.delenv(dashboard.HOSTS_ENV, raising=False)
+        assert dashboard.allowed_hosts_for("0.0.0.0", []) == []
+        assert dashboard.allowed_hosts_for("::", []) == []
