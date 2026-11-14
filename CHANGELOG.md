@@ -5,6 +5,12 @@ versioning follows [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-11-14
+
+A security fix for the review dashboard, and a fix for the test suite. A web
+page could reach the dashboard through DNS rebinding, read its cases and
+approve or reject remediations. Upgrade if you run `extguard-dashboard`.
+
 ### Security
 
 - **Dashboard: DNS rebinding.** A web page could make its own domain
@@ -35,6 +41,8 @@ versioning follows [SemVer](https://semver.org/).
 - `[dev]` extras include PyYAML, so the tests that parse every exported
   Sigma rule as YAML run in CI. Without it they were silently skipped.
 - `[dev]` extras need pytest-asyncio 0.24 or newer.
+- GitHub Actions: `setup-python` 7.1.0, `pypi-publish` 1.14.3
+  (Dependabot).
 
 ### Fixed
 
@@ -42,8 +50,8 @@ versioning follows [SemVer](https://semver.org/).
   (released in late October). Leaving `asyncio_default_fixture_loop_scope`
   unset is now a deprecation warning, which `pytest.ini`'s
   `filterwarnings = error` turned into an internal error (exit code 3).
-  The weekly live job failed on 2026-11-02, and CI would have failed on its
-  next run. `pytest.ini` now sets it to `function`.
+  The weekly live job failed on 2026-11-02 and 2026-11-09, and CI would
+  have failed on its next run. `pytest.ini` now sets it to `function`.
 
 ## [0.4.1] — 2026-10-14
 
